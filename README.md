@@ -1,3 +1,5 @@
+![Image of Orca](https://github.com/MehmetEminKaymaz/Orca/blob/master/Orca.png)
+
 # Orca
 Simple and Powerful ORM for  Go Language
 
