@@ -3,6 +3,20 @@
 # Orca
 Simple and Powerful ORM for  Go Language
 
+
+### Install
+```
+ go get github.com/MehmetEminKaymaz/Orca
+ 
+```
+
+### Dependencies
+```
+go get github.com/mattn/go-sqlite3
+
+```
+
+
 Firstly define your structs
 
 ```Go
