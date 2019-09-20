@@ -10,7 +10,7 @@ Firstly define your structs
 type Person struct {
 	Name string
 	Age int
-    MyHead Head
+        MyHead Head
 	FriendsName []string
 }
 
@@ -40,8 +40,8 @@ then use Orca to perform CRUD operations
     //now create a person 
     someone:=Person{
 		Age:99,
-		Name:"Uzun Yaşar",
-		FriendsName: []string{"Ahmet","Hasan","Necmi","Batucan"},
+		Name:"Gandalf",
+		FriendsName: []string{"Frodo","Sam","Galadriel","Radagast"},
 		MyHead:Head{
 			Value:Brain{
 				IQ:1000,//:)
@@ -55,7 +55,7 @@ then use Orca to perform CRUD operations
   
   //update example
   newPerson:=someone
-	newPerson.Name="Çok uzun yaşar"
+  newPerson.Name="Saruman"
   
   myPersonList.Update(someone,newPerson)//Updated!
   
