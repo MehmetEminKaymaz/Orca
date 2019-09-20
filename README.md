@@ -83,7 +83,7 @@ then use Orca to perform CRUD operations
  
   
   //after the manipulate get the result as slice like in this wise :
-  Orca.From(myPersonList.ToSlice()).Skip(0).Take(1).ToSlice() 
+  result:=Orca.From(myPersonList.ToSlice()).Skip(0).Take(1).ToSlice() 
   
   
   
