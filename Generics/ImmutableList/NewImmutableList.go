@@ -9,7 +9,7 @@ type query struct {
 }
 
 
-func From(source interface{}) query{
+func NewImmutableList(source interface{}) query{
 
 	val:=reflect.ValueOf(source)
 	if val.Kind()!=reflect.Slice{

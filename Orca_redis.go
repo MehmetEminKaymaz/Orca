@@ -3,6 +3,7 @@ package Orca
 import (
 	"github.com/go-redis/redis"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,8 @@ type NewRedisVariable struct {
 type RedisClient struct {
 	Db *redis.Client
     DbOps RedisOptions
+	LocalH []LocalHook
+	lock bool
 }
 
 type RedisCollection struct {
@@ -27,6 +30,8 @@ type RedisCollection struct {
 	TableName string
 	KeysList []interface{}
 	ValueList []interface{}
+	LocalH []LocalHook
+	lock bool
 
 }
 
@@ -47,6 +52,41 @@ func (r RedisOptions) Options() []string{
 	return ops
 
 }
+//will be implement immediately
+func(r *RedisClient) AddLocalHooks(hks ...LocalHook){
+
+	var ids []string
+	for i:=0;i< len(hks);i++{
+		ids = append(ids,hks[i].getID())
+	}
+	r.DeleteLocalHooks(ids...)
+	r.LocalH=append(r.LocalH,hks...)
+
+
+}
+func(r *RedisClient) AddLocalHook(hks LocalHook){
+	r.DeleteLocalHook(hks.getID())
+	r.LocalH=append(r.LocalH,hks)
+}
+func(r *RedisClient) DeleteLocalHook(hks string){
+
+	for i:=0;i< len(r.LocalH);i++{
+		if r.LocalH[i].getID()==hks{
+			r.LocalH[i]=r.LocalH[len(r.LocalH)-1]
+			r.LocalH=r.LocalH[:len(r.LocalH)-1]
+			break
+		}
+	}
+
+}
+func(r *RedisClient) DeleteLocalHooks(hks ...string){
+
+	r.LocalH=reorder(r.LocalH,hks)
+
+}
+
+
+//
 
 func (r *RedisClient) GetCollection(x interface{},tableName string) ICollection{
 
@@ -66,6 +106,8 @@ func (r *RedisClient) GetCollection(x interface{},tableName string) ICollection{
 			TableName:tableName,
 			KeysList:make([]interface{},0),
 			ValueList:make([]interface{},0),
+			LocalH:r.LocalH,
+			lock:false,
 		}
 	}
 	Check(err)
@@ -89,6 +131,8 @@ func (r *RedisClient) GetCollection(x interface{},tableName string) ICollection{
 		TableName:tableName,
 		KeysList:Keys,
 		ValueList:relatedValues,
+		LocalH:r.LocalH,
+		lock:false,
 
 	}
 }
@@ -118,6 +162,8 @@ func getDatabaseRedis(Addr,Password,DB string) *RedisClient{
 			Password:Password,
 			Addr:Addr,
 		},
+		LocalH:[]LocalHook{},
+		lock:false,
 	}
 
 
@@ -125,7 +171,26 @@ func getDatabaseRedis(Addr,Password,DB string) *RedisClient{
 
 func (r *RedisCollection) Add(x interface{}){
 
+	if r.lock==false {
 
+		if len(r.LocalH) > 0 {
+
+			var beforeAddLocalHooks []LocalHook
+			for i := 0; i < len(r.LocalH); i++ {
+				if _, n := r.LocalH[i].getSign(); n == BeforeAdd {
+					beforeAddLocalHooks = append(beforeAddLocalHooks, r.LocalH[i])
+				}
+			}
+
+			sort.Sort(byPriority(beforeAddLocalHooks))
+
+			for i := 0; i < len(beforeAddLocalHooks); i++ {
+				funk := beforeAddLocalHooks[i].getHookFunc()
+				x = funk(x)
+			}
+		}
+
+	}
 
 	switch x.(type) {
 	case NewRedisVariable,NewMemCacheVariable:
@@ -166,6 +231,27 @@ func (r *RedisCollection) Add(x interface{}){
 
 	}
 
+	if r.lock==false {
+
+		if len(r.LocalH) > 0 {
+			//local hook
+			var afterAddLocalHooks []LocalHook
+			for i := 0; i < len(r.LocalH); i++ {
+				if _, n := r.LocalH[i].getSign(); n == AfterAdd {
+					afterAddLocalHooks = append(afterAddLocalHooks, r.LocalH[i])
+				}
+			}
+
+			sort.Sort(byPriority(afterAddLocalHooks))
+
+			for i := 0; i < len(afterAddLocalHooks); i++ {
+				funk := afterAddLocalHooks[i].getHookFunc()
+				funk(x)
+			}
+			//local hook
+		}
+	}
+
 }
 
 func isThereAKey(slice interface{},key interface{}) bool{
@@ -184,7 +270,23 @@ func isThereAKey(slice interface{},key interface{}) bool{
 
 func (r *RedisCollection) AddRange(x interface{}){
 
+	if len(r.LocalH)>0 {
+		//local hook
+		var beforeAddRangeLocalHooks []LocalHook
+		for i := 0; i < len(r.LocalH); i++ {
+			if _, n := r.LocalH[i].getSign(); n == BeforeAddRange {
+				beforeAddRangeLocalHooks = append(beforeAddRangeLocalHooks, r.LocalH[i])
+			}
+		}
 
+		sort.Sort(byPriority(beforeAddRangeLocalHooks))
+
+		for i := 0; i < len(beforeAddRangeLocalHooks); i++ {
+			funk := beforeAddRangeLocalHooks[i].getHookFunc()
+			x = funk(x)
+		}
+		//local hook
+	}
 
 
 	switch  x.(type){
@@ -256,16 +358,92 @@ func (r *RedisCollection) AddRange(x interface{}){
 
 	}
 
+	if len(r.LocalH)>0 {
+		//local hook
+		var afterAddRangeLocalHooks []LocalHook
+		for i := 0; i < len(r.LocalH); i++ {
+			if _, n := r.LocalH[i].getSign(); n == AfterAddRange {
+				afterAddRangeLocalHooks = append(afterAddRangeLocalHooks, r.LocalH[i])
+			}
+		}
+
+		sort.Sort(byPriority(afterAddRangeLocalHooks))
+
+		for i := 0; i < len(afterAddRangeLocalHooks); i++ {
+			funk := afterAddRangeLocalHooks[i].getHookFunc()
+			funk(x)
+		}
+		//local hook
+	}
+
 }
 
 func (r *RedisCollection) Update(x interface{},y interface{}){
 
+	r.lock=true
+	if len(r.LocalH)>0 {
+		//local hook
+		var beforeUpdateLocalHooks []LocalHook
+		for i := 0; i < len(r.LocalH); i++ {
+			if _, n := r.LocalH[i].getSign(); n == BeforeUpdate {
+				beforeUpdateLocalHooks = append(beforeUpdateLocalHooks, r.LocalH[i])
+			}
+		}
+
+		sort.Sort(byPriority(beforeUpdateLocalHooks))
+
+		for i := 0; i < len(beforeUpdateLocalHooks); i++ {
+			funk := beforeUpdateLocalHooks[i].getHookFunc()
+			x = funk(x)
+		}
+		//local hook
+	}
+
 	r.Delete(x)
 	r.Add(y)
+
+	if len(r.LocalH)>0 {
+		//local hook
+		var afterUpdateLocalHooks []LocalHook
+		for i := 0; i < len(r.LocalH); i++ {
+			if _, n := r.LocalH[i].getSign(); n == AfterUpdate {
+				afterUpdateLocalHooks = append(afterUpdateLocalHooks, r.LocalH[i])
+			}
+		}
+
+		sort.Sort(byPriority(afterUpdateLocalHooks))
+
+		for i := 0; i < len(afterUpdateLocalHooks); i++ {
+			funk := afterUpdateLocalHooks[i].getHookFunc()
+			funk(y)
+		}
+		//local hook
+	}
+	r.lock=false
 
 }
 
 func (r *RedisCollection) Delete(x interface{}){
+
+	if r.lock==false {
+		if len(r.LocalH) > 0 {
+			//local hook
+			var beforeDeleteLocalHooks []LocalHook
+			for i := 0; i < len(r.LocalH); i++ {
+				if _, n := r.LocalH[i].getSign(); n == BeforeDelete {
+					beforeDeleteLocalHooks = append(beforeDeleteLocalHooks, r.LocalH[i])
+				}
+			}
+
+			sort.Sort(byPriority(beforeDeleteLocalHooks))
+
+			for i := 0; i < len(beforeDeleteLocalHooks); i++ {
+				funk := beforeDeleteLocalHooks[i].getHookFunc()
+				x = funk(x)
+			}
+			//local hook
+		}
+	}
 
 	//r.MyDb.Del(r.TableName+":"+reflect.ValueOf(x).Field(0).Interface().(string))
 
@@ -300,6 +478,28 @@ func (r *RedisCollection) Delete(x interface{}){
 
 	},reflect.ValueOf(x).Field(0).Interface().(string))
 	Check(err)
+
+	if r.lock==false {
+
+		if len(r.LocalH) > 0 {
+			//local hook
+			var afterDeleteLocalHooks []LocalHook
+			for i := 0; i < len(r.LocalH); i++ {
+				if _, n := r.LocalH[i].getSign(); n == AfterDelete {
+					afterDeleteLocalHooks = append(afterDeleteLocalHooks, r.LocalH[i])
+				}
+			}
+
+			sort.Sort(byPriority(afterDeleteLocalHooks))
+
+			for i := 0; i < len(afterDeleteLocalHooks); i++ {
+				funk := afterDeleteLocalHooks[i].getHookFunc()
+				funk(x)
+			}
+			//local hook
+		}
+
+	}
 
 }
 

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -18,6 +19,8 @@ type Database struct {
 	Name string
 	db *sql.DB
 	AllTables []string
+	LocalH []LocalHook
+	lock bool
 
 
 }
@@ -36,6 +39,8 @@ type Collection struct {
 	ITsTable Table
 	List map[int]interface{}
 	data *Database
+	LocalH []LocalHook
+	lock bool
 
 }
 
@@ -70,8 +75,41 @@ func getDatabase(driverName,path string) *Database{
 	return &Database{
 		Name:filepath.Base(path),
 		db:db,
+		LocalH:[]LocalHook{},
+		lock:false,
 	}
 }
+
+//will be implement immediately
+func(Data *Database) AddLocalHooks(hks ...LocalHook){
+
+	var ids []string
+	for i:=0;i< len(hks);i++{
+		ids = append(ids,hks[i].getID())
+	}
+	Data.DeleteLocalHooks(ids...)
+	Data.LocalH=append(Data.LocalH,hks...)
+
+}
+func(Data *Database) AddLocalHook(hks LocalHook){
+
+	Data.DeleteLocalHook(hks.getID())
+	Data.LocalH=append(Data.LocalH,hks)
+
+}
+func(Data *Database) DeleteLocalHook(hks string){
+	for i:=0;i< len(Data.LocalH);i++{
+		if Data.LocalH[i].getID()==hks{
+			Data.LocalH[i]=Data.LocalH[len(Data.LocalH)-1]
+			Data.LocalH=Data.LocalH[:len(Data.LocalH)-1]
+			break
+		}
+	}
+}
+func(Data *Database) DeleteLocalHooks(hks ...string){
+	Data.LocalH=reorder(Data.LocalH,hks)
+}
+//
 
 
 
@@ -121,6 +159,8 @@ func(Data *Database)  GetCollection(x interface{},tableName string) ICollection 
 		ITsTable:t,
 		List:myMap,
 		data:Data,
+		LocalH:Data.LocalH,
+		lock:false,
 
 	}
 
@@ -731,6 +771,31 @@ func NewSliceFor(item interface{},len,cap int)(newSlice interface{}){
 }
 
 func (c *Collection) Add(x interface{}) {
+
+	if c.lock==false {
+
+		if len(c.LocalH) > 0 {
+
+			//local hook
+			var beforeAddLocalHooks []LocalHook
+			for i := 0; i < len(c.LocalH); i++ {
+				if _, n := c.LocalH[i].getSign(); n == BeforeAdd {
+					beforeAddLocalHooks = append(beforeAddLocalHooks, c.LocalH[i])
+				}
+			}
+
+			sort.Sort(byPriority(beforeAddLocalHooks))
+
+			for i := 0; i < len(beforeAddLocalHooks); i++ {
+				funk := beforeAddLocalHooks[i].getHookFunc()
+				x = funk(x)
+			}
+			//local hook
+
+		}
+	}
+
+
 	keys:=getKeysAsSlice(c.List)
 	var newID int
 	if len(keys)==0{
@@ -750,11 +815,52 @@ func (c *Collection) Add(x interface{}) {
 		c.List[newID]=x //inserted!
 	}
 
+	if c.lock==false {
+		if len(c.LocalH) > 0 {
+			//local hook
+			var afterAddLocalHooks []LocalHook
+			for i := 0; i < len(c.LocalH); i++ {
+				if _, n := c.LocalH[i].getSign(); n == AfterAdd {
+					afterAddLocalHooks = append(afterAddLocalHooks, c.LocalH[i])
+				}
+			}
+
+			sort.Sort(byPriority(afterAddLocalHooks))
+
+			for i := 0; i < len(afterAddLocalHooks); i++ {
+				funk := afterAddLocalHooks[i].getHookFunc()
+				funk(x)
+			}
+			//local hook
+
+		}
+	}
 
 }
 
 
 func (c *Collection) Delete(obj interface{}) {
+
+	if c.lock==false {
+		if len(c.LocalH) > 0 {
+			//local hook
+			var beforeDeleteLocalHooks []LocalHook
+			for i := 0; i < len(c.LocalH); i++ {
+				if _, n := c.LocalH[i].getSign(); n == BeforeDelete {
+					beforeDeleteLocalHooks = append(beforeDeleteLocalHooks, c.LocalH[i])
+				}
+			}
+
+			sort.Sort(byPriority(beforeDeleteLocalHooks))
+
+			for i := 0; i < len(beforeDeleteLocalHooks); i++ {
+				funk := beforeDeleteLocalHooks[i].getHookFunc()
+				obj = funk(obj)
+			}
+			//local hook
+
+		}
+	}
 
 	for k,v:=range c.List{
 		if reflect.DeepEqual(v,obj){
@@ -765,6 +871,32 @@ func (c *Collection) Delete(obj interface{}) {
 			break
 		}
 	}
+
+
+	if c.lock==false {
+		if len(c.LocalH) > 0 {
+
+			//local hook
+			var afterDeleteLocalHooks []LocalHook
+			for i := 0; i < len(c.LocalH); i++ {
+				if _, n := c.LocalH[i].getSign(); n == AfterDelete {
+					afterDeleteLocalHooks = append(afterDeleteLocalHooks, c.LocalH[i])
+				}
+			}
+
+			sort.Sort(byPriority(afterDeleteLocalHooks))
+
+			for i := 0; i < len(afterDeleteLocalHooks); i++ {
+				funk := afterDeleteLocalHooks[i].getHookFunc()
+				funk(obj)
+			}
+			//local hook
+
+		}
+	}
+
+
+
 }
 
 func (c *Collection) Clear(){
@@ -775,6 +907,26 @@ func (c *Collection) Clear(){
 }
 
 func (c *Collection) Update(old interface{},new interface{}){
+
+    c.lock=true
+	if len(c.LocalH)>0 {
+		//local hook
+		var beforeUpdateLocalHooks []LocalHook
+		for i := 0; i < len(c.LocalH); i++ {
+			if _, n := c.LocalH[i].getSign(); n == BeforeUpdate {
+				beforeUpdateLocalHooks = append(beforeUpdateLocalHooks, c.LocalH[i])
+			}
+		}
+
+		sort.Sort(byPriority(beforeUpdateLocalHooks))
+
+		for i := 0; i < len(beforeUpdateLocalHooks); i++ {
+			funk := beforeUpdateLocalHooks[i].getHookFunc()
+			old = funk(old)
+		}
+		//local hook
+
+	}
 
 	var Ids []int
 
@@ -794,6 +946,26 @@ func (c *Collection) Update(old interface{},new interface{}){
 
 	}
 	//update finish
+
+	if len(c.LocalH)>0 {
+		//local hook
+		var afterUpdateLocalHooks []LocalHook
+		for i := 0; i < len(c.LocalH); i++ {
+			if _, n := c.LocalH[i].getSign(); n == AfterUpdate {
+				afterUpdateLocalHooks = append(afterUpdateLocalHooks, c.LocalH[i])
+			}
+		}
+
+		sort.Sort(byPriority(afterUpdateLocalHooks))
+
+		for i := 0; i < len(afterUpdateLocalHooks); i++ {
+			funk := afterUpdateLocalHooks[i].getHookFunc()
+			funk(new)
+		}
+		//local hook
+
+	}
+	c.lock=false
 
 }
 
