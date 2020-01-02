@@ -1,1171 +1,585 @@
 package Orca
 
 import (
-	"database/sql"
-	"fmt"
+	"errors"
 	_ "github.com/mattn/go-sqlite3"
-	"path/filepath"
-	"reflect"
-	"strconv"
-	"strings"
+)
+
+const(//supported databases
+	MySQL="MySQL"
+	SQLite="SQLite"
+	MSSQL="MSSQL"
+	MongoDB="MongoDB"
+	Redis="Redis"
+	PostgreSQL="PostgreSQL"
+	MemCached="MemCached"
 )
 
 
-type Database struct {
-
-	Name string
-	db *sql.DB
-	AllTables []string
 
 
-}
-
-type Table struct {
-	Name string
-	Columns []string
-	ColTypes []reflect.Type
-	ContainsEmbedded bool
-	EmbeddedTables []Table
-	ContainsArr bool
-	ArrTables []Table
-}
-
-type Collection struct {
-	ITsTable Table
-	List map[int]interface{}
-	data *Database
-
-}
+type IDatabase interface {
 
 
-
-func GetDatabase(driverName,path string) *Database{
-
-	db,err:=sql.Open(driverName,path)
-	Check(err)
-
-	return &Database{
-		Name:filepath.Base(path),
-		db:db,
-	}
-}
-
-/*Data *Database*/
-func(Data *Database)  GetCollection(x interface{},tableName string) Collection {
-
-	var t Table = getTable(x,tableName) //get table from struct(x's underlying value must be a struct!)
-
-
-    execTheQueries(Data,getQueries(t))//we create tables if not exist
-
-    getAllTableNamesforDb(Data)
-
-
-
-
-	myMap:=make(map[int]interface{})
-    //now we get tuples from db and convert to our struct type(to x's underlying value)
-
-
-
-    count:=getTupleCount(Data,tableName)
-
-    if count<=0{//table is empty
-
-
-	}else{
-
-		min:=getMinId(Data,tableName)
-		max:=getMAXId(Data,tableName)
-
-		for i:=min;i<=max;i++{
-			s:=strconv.Itoa(i)
-			myMap[i]=getTupleToStruct(Data,x,s,tableName).Interface()
-		}
-
-	}
-
-
-
-
-
-    //
-	_=t
-
-	return Collection{
-		ITsTable:t,
-		List:myMap,
-		data:Data,
-
-	}
-
-
+	GetCollection(interface{},string) ICollection
+	AddLocalHooks(...LocalHook)
+	AddLocalHook(LocalHook)
+	DeleteLocalHook(string)
+	DeleteLocalHooks(...string)
 
 
 
 }
 
-
-
-func getMAXId(Data *Database,tableName string) int{
-	var result int
-	row:=Data.db.QueryRow("SELECT MAX(Id) FROM "+tableName)
-	err:=row.Scan(&result)
-	Check(err)
-	return result
+type IOptions interface {
+	Options() []string
 }
 
-
-
-func getMinId(Data *Database,tableName string) int{
-	var result int
-	row:=Data.db.QueryRow("SELECT MIN(Id) FROM "+tableName)
-	err:=row.Scan(&result)
-	Check(err)
-
-	return result
-
-}
-
-
-func getTupleToStruct2(Data *Database,x interface{},Id,tableName string) interface{} {
-	//count := getTupleCount(Data,tableName)
-
-	//ptr:=reflect.New(reflect.TypeOf(x))
-	//newStruct:=ptr.Elem()
-	//fmt.Println(newStruct.Type())
-
-
-	NewStruct:=reflect.ValueOf(&x).Elem()
-	fmt.Println(NewStruct.CanAddr())
-
-	BossSlice:=NewSliceFor(NewStruct,0,1)
-	ColNames:=getColumnNames(Data, tableName)
-	ColNums:= len(ColNames)
-
-	cachePS:=make([]interface{},ColNums,ColNums)
-	cache :=make([]interface{},ColNums,ColNums)
-	for i,_:=range cachePS{
-		cache[i]=&cachePS[i]
-	}
-
-	rows,err:=Data.db.Query("SELECT * FROM "+tableName+" WHERE Id=="+Id)
-	Check(err)
-	for rows.Next(){
-		err:=rows.Scan(cache...)
-		Check(err)
-
-		for i,v:=range ColNames[1:]{//[1:] jump over Id column!
-
-			if strings.Contains(v,"EMARR_"){//embedded array or slice!
-
-				s:=strings.Split(v,"_")
-
-				switch s[1] {
-				case "int"://caches array of int
-					TheSlice:=make([]int,0,1)
-					var cacheId int
-					var cacheInt int
-					rows,err:=Data.db.Query("SELECT * FROM "+tableName+"_"+s[2]+" WHERE Id=="+Id)
-					Check(err)
-					for rows.Next(){
-						err=rows.Scan(&cacheId,&cacheInt)
-						Check(err)
-						TheSlice=append(TheSlice,cacheInt)
-					}
-					defer func(){
-						err:=rows.Close()
-						Check(err)
-					}()
-
-					NewStruct.Field(i).Set(reflect.ValueOf(TheSlice))
-
-
-
-				case "string": //caches array of string
-
-					TheSlice:=make([]string,0,1)
-					var cacheId int
-					var cacheString string
-					rows,err:=Data.db.Query("SELECT * FROM "+tableName+"_"+s[2]+" WHERE Id=="+Id)
-					Check(err)
-					for rows.Next(){
-						err=rows.Scan(&cacheId,&cacheString)
-						Check(err)
-						TheSlice=append(TheSlice,cacheString)
-					}
-					defer func(){
-						err:=rows.Close()
-						Check(err)
-					}()
-					NewStruct.Field(i).Set(reflect.ValueOf(TheSlice))
-
-
-				case "float": //caches array of float
-					TheSlice:=make([]float32,0,1)
-					var cacheId int
-					var cachefloat float32
-					rows,err:=Data.db.Query("SELECT * FROM "+tableName+"_"+s[2]+" WHERE Id=="+Id)
-					Check(err)
-					for rows.Next(){
-						err=rows.Scan(&cacheId,&cachefloat)
-						Check(err)
-						TheSlice=append(TheSlice,cachefloat)
-					}
-					defer func(){
-						err:=rows.Close()
-						Check(err)
-					}()
-
-					NewStruct.Field(i).Set(reflect.ValueOf(TheSlice))
-
-				default://default catches array of struct
-
-
-					/*	val:=getTupleToStruct2(Data,newStruct.Field(i).Interface(),Id,tableName+"_"+s[3])
-						reflect.ValueOf(newStruct.Field(i))=reflect.Append(reflect.ValueOf(newStruct.Field(i)),val...)
-		*/
-					/*val:=getTupleToStruct2(Data,newStruct.Field(i).Type().Elem().Name(),Id,tableName+"_"+s[2])
-					newStruct.Field(i).Set(reflect.ValueOf(val))*/
-					val:=getTupleToStruct2(Data,NewStruct.Field(i).Type().Elem(),Id,tableName+"_"+s[2])
-					NewStruct.Field(i).Elem().Set(reflect.ValueOf(val))
-
-				}
-
-
-			}else if strings.Contains(v,"EM_"){//embedded struct!
-
-				s:=strings.Split(v,"_")
-				EMId:=int(cachePS[i+1].(int64))
-				sEMId:=strconv.Itoa(EMId)
-				TheOtherX:=NewStruct.Field(i).Interface()
-				NewStruct.Field(i).Set(getTupleToStruct(Data,TheOtherX,sEMId,tableName+"_"+s[1]))
-
-
-
-			}else if v=="Id"{//primary key or foreign key
-
-				//reflect.ValueOf(newStruct).Field(i).Set(reflect.ValueOf(int(slice[i].(int64))))
-
-
-			}else{//normal
-
-				s:=strings.Split(v,"_")
-				switch s[1] {
-				case "int":
-					val:=reflect.ValueOf(int(cachePS[i+1].(int64)))
-					_=val
-					NewStruct.Field(i).Set(val)
-				case "string":
-					val:=reflect.ValueOf(cachePS[i+1].(string))
-					//fmt.Println(reflect.ValueOf(&NewStruct).Elem().CanAddr())
-					//fmt.Println(reflect.ValueOf(&NewStruct).Elem().Field(i).CanAddr())
-					NewStruct.Field(i).Set(val)
-
-				case "float":
-					val:=reflect.ValueOf(float32(cachePS[i+1].(float64)))
-					NewStruct.Field(i).Set(val)
-
-				default:
-
-
-				}
-
-
-			}
-
-		}
-
-		BossSlice=reflect.Append(reflect.ValueOf(BossSlice),NewStruct)
-	}
-	defer func(){
-		err:=rows.Close()
-		Check(err)
-	}()
-
-
-
-	return BossSlice
-}
-
-
-func getTupleToStruct(Data *Database,x interface{},Id,tableName string) reflect.Value {//x must be a struct
-
-
-	//newStruct:=reflect.ValueOf(newStructLike(x))
-	//newStruct:=reflect.ValueOf(x)
-	ptr:=reflect.New(reflect.TypeOf(x))
-	newStruct:=ptr.Elem()
-
-	ColNames:=getColumnNames(Data, tableName)
-	ColNums:= len(ColNames)
-
-
-	cachePS:=make([]interface{},ColNums,ColNums)
-	cache :=make([]interface{},ColNums,ColNums)
-	for i,_:=range cachePS{
-		cache[i]=&cachePS[i]
-	}
-
-	row:=Data.db.QueryRow("SELECT * FROM "+tableName+" WHERE Id=="+Id)
-
-	err:=row.Scan(cache...)
-
-	Check(err)
-
-	for i,v:=range ColNames[1:]{//[1:] jump over Id column!
-
-		if strings.Contains(v,"EMARR_"){//embedded array or slice!
-
-		s:=strings.Split(v,"_")
-
-			switch s[1] {
-			case "int"://caches array of int
-			TheSlice:=make([]int,0,1)
-			var cacheId int
-			var cacheInt int
-			rows,err:=Data.db.Query("SELECT * FROM "+tableName+"_"+s[2]+" WHERE Id=="+Id)
-			Check(err)
-			for rows.Next(){
-				err=rows.Scan(&cacheId,&cacheInt)
-				Check(err)
-				TheSlice=append(TheSlice,cacheInt)
-			}
-
-			err=rows.Close()
-			Check(err)
-
-
-			newStruct.Field(i).Set(reflect.ValueOf(TheSlice))
-
-
-
-			case "string": //caches array of string
-
-			TheSlice:=make([]string,0,1)
-			var cacheId int
-			var cacheString string
-				rows,err:=Data.db.Query("SELECT * FROM "+tableName+"_"+s[2]+" WHERE Id=="+Id)
-				Check(err)
-				for rows.Next(){
-					err=rows.Scan(&cacheId,&cacheString)
-					Check(err)
-					TheSlice=append(TheSlice,cacheString)
-				}
-
-					err=rows.Close()
-					Check(err)
-
-				newStruct.Field(i).Set(reflect.ValueOf(TheSlice))
-
-
-			case "float": //caches array of float
-			TheSlice:=make([]float32,0,1)
-			var cacheId int
-			var cachefloat float32
-				rows,err:=Data.db.Query("SELECT * FROM "+tableName+"_"+s[2]+" WHERE Id=="+Id)
-				Check(err)
-				for rows.Next(){
-					err=rows.Scan(&cacheId,&cachefloat)
-					Check(err)
-					TheSlice=append(TheSlice,cachefloat)
-				}
-
-					err=rows.Close()
-					Check(err)
-
-				newStruct.Field(i).Set(reflect.ValueOf(TheSlice))
-
-			default://default catches array of struct
-
-             /*TheSlice:=make([]interface{},0,1)
-
-             cacheStruct:=newStruct.Field(i)
-
-             min:=getMinId(Data,tableName+"_"+s[2])
-             max:=getMAXId(Data,tableName+"_"+s[2])
-             for i:=min;i<=max;i++{
-             	strc:=getTupleToStruct(Data,cacheStruct.Interface(),strconv.Itoa(i),tableName+"_"+s[2])
-             	TheSlice=append(TheSlice,strc)
-
-			 }*/
-
-
-
-			}
-
-
-		}else if strings.Contains(v,"EM_"){//embedded struct!
-
-		 s:=strings.Split(v,"_")
-		 EMId:=int(cachePS[i+1].(int64))
-		 sEMId:=strconv.Itoa(EMId)
-		 TheOtherX:=newStruct.Field(i).Interface()
-		 newStruct.Field(i).Set(getTupleToStruct(Data,TheOtherX,sEMId,tableName+"_"+s[1]))
-
-
-
-		}else if v=="Id"{//primary key or foreign key
-
-			//reflect.ValueOf(newStruct).Field(i).Set(reflect.ValueOf(int(slice[i].(int64))))
-
-
-		}else{//normal
-
-		    s:=strings.Split(v,"_")
-			switch s[1] {
-			case "int":
-				val:=reflect.ValueOf(int(cachePS[i+1].(int64)))
-				_=val
-				newStruct.Field(i).Set(val)
-			case "string":
-				val:=reflect.ValueOf(cachePS[i+1].(string))
-				newStruct.Field(i).Set(val)
-
-			case "float":
-				val:=reflect.ValueOf(float32(cachePS[i+1].(float64)))
-				newStruct.Field(i).Set(val)
-
-			default:
-
-
-			}
-
-
-		}
-
-	}
-
-	return newStruct
-
+type ICollection interface {
+
+	Add(interface{})
+	AddRange(interface{})
+	Update(interface{},interface{})
+	Delete(interface{})
+	Clear()
+	Foreach(interface{})
+	GetLogs()
+	ToSlice() []interface{}
 
 }
 
 
 
+func Use(yourDb string,options IOptions) (IDatabase,error){
 
 
 
-func getTupleCount(Data *Database,tableName string) int{
-	var result int
+	switch yourDb {
 
-	q1:=fmt.Sprintf("Select Count(rowid) FROM %s",tableName)
-	row:=Data.db.QueryRow(q1)
-	row.Scan(&result)
-
-	return result
-
-}
-
-func getColumnNames(Data *Database,tableName string) []string{
-
-	var all []string
-	var al string
-	var count int
-	q1:=fmt.Sprintf("Select Count(name) FROM PRAGMA_table_info('%s');",tableName)
-	row:=Data.db.QueryRow(q1)
-	row.Scan(&count)
-
-	q2:=fmt.Sprintf("Select name FROM PRAGMA_table_info('%s');",tableName)
-	rows,err:=Data.db.Query(q2)
-	Check(err)
-	for rows.Next(){
-		err:=rows.Scan(&al)
-		Check(err)
-		all=append(all,al)
-	}
-	defer rows.Close()
-
-	return  all
-
-}
-func newStructLike(Astruct interface{}) (newStruct interface{}){ //this method return settable and adressable struct
-	ptr:=reflect.New(reflect.TypeOf(Astruct))
-	newStruct=ptr.Elem()
-	return newStruct
-}
-
-func getAllTableNamesforDb(Data *Database){
-	var names []string
-	var name string
-	q:="SELECT name FROM sqlite_master WHERE type ='table' AND name NOT LIKE 'sqlite_%';"
-	rows,err:=Data.db.Query(q)
-	Check(err)
-	for rows.Next(){
-		rows.Scan(&name)
-		names=append(names,name)
-	}
-	defer rows.Close()
-
-	Check(err)
-	Data.AllTables=names
-}
-
-func execTheQueries(data *Database,Q []string){
-
-	for _,v:=range Q{
-		res,err:=data.db.Exec(v)
-		_=res
-		Check(err)
-	}
-
-}
-
-func unique(intSlice []string) []string {
-	keys := make(map[string]bool)
-	list := []string{}
-	for _, entry := range intSlice {
-		if _, value := keys[entry]; !value {
-			keys[entry] = true
-			list = append(list, entry)
-		}
-	}
-	return list
-}
-
-
-func getQueries(t Table) []string{
-
-	var queries []string
-
-	var emptytt []Table
-	var tt = t
-    for tt.ContainsArr||tt.ContainsEmbedded{
-    	emptytt=emptytt[:0]
-    	emptytt=append(emptytt,tt.ArrTables...)
-    	emptytt=append(emptytt,tt.EmbeddedTables...)
-    	for _,v:=range emptytt{
-    		queries=append(queries,getQuery(v))
-			tt=v
-		}
-
-	}
-
-	var ttt=t
-	var emptytt2 []Table
-	for ttt.ContainsEmbedded||ttt.ContainsArr{
-		emptytt2=emptytt2[:0]
-		emptytt2=append(emptytt2,ttt.EmbeddedTables...)
-		emptytt2=append(emptytt2,ttt.ArrTables...)
-		for _,v:=range emptytt2{
-			queries=append(queries,getQuery(v))
-			ttt=v
-		}
-	}
-
-	queries=append(queries,getQuery(t))
-
-	queries=unique(queries)
-
-	return queries
-
-}
-
-func getQuery(t Table) string{
-	var Query string = "CREATE TABLE IF NOT EXISTS "+t.Name+"("
-
-	for i:=0;i< len(t.Columns);i++{//range over the columns name
-	
-	   if i==0{
-	   	  Query+=t.Columns[i]+" "+getType(t.ColTypes[i])
-	   }else{
-	   	  Query+=","+t.Columns[i]+" "+getType(t.ColTypes[i])
-	   }
-
-
-
-
-	}
-	Query+=")"
-
-	return Query
-
-}
-
-func getType(typs reflect.Type) string{
-
-	switch typs.Kind() {
-
-	case reflect.Int,reflect.Int8,reflect.Uint16,reflect.Int32,reflect.Int64:
-		return "INTEGER"
-	case reflect.Float32,reflect.Float64:
-		return "REAL"
-	case reflect.String:
-		return "TEXT"
-	case reflect.Struct:
-		return "INTEGER" //its for foreign key
+	case MySQL:
+		return nil,nil
+	case MSSQL:
+		return nil,nil
+	case SQLite:
+		dname:=options.Options()[0]
+		path:=options.Options()[1]
+		return getDatabase(dname,path),nil
+	case PostgreSQL:
+		return nil,nil
+	case MongoDB:
+		applyUri:=options.Options()[0]
+		dname:=options.Options()[1]
+		return getDatabaseMongo(applyUri,dname),nil
+	case Redis:
+		addr:=options.Options()[0]
+		pass:=options.Options()[1]
+		db:=options.Options()[2]
+		return getDatabaseRedis(addr,pass,db),nil
+	case MemCached:
+		s:=options.Options()
+		return getDatabaseMemCached(s),nil
 	default:
-        return "TEXT"
+		//we do not support
+		return nil,errors.New("Orca does not support the database.(Supported Databases : MySQL,SQLite," +
+			"MSSQL,MongoDB,Redis,PostgreSQL)")
+
+	}
+}
+
+
+type LocalHook interface {
+	getID() string
+	getSign() (int , string)
+	getHookFunc() func(interface{})interface{}
+}
+
+const(//local hooks
+	BeforeAdd="BeforeAdd"
+	AfterAdd="AfterAdd"
+	BeforeDelete="BeforeDelete"
+	AfterDelete="AfterDelete"
+	BeforeAddRange="BeforeAddRange"
+	AfterAddRange="AfterAddRange"
+	BeforeUpdate="BeforeUpdate"
+	AfterUpdate="AfterUpdate"
+
+)
+
+type NewLocalHookVariable struct {
+	ID string
+	Name string
+	Priority int
+	HookFunc func(interface{})interface{}
+}
+func (l NewLocalHookVariable) getID() string{
+	return l.ID
+}
+
+func (l NewLocalHookVariable) getSign() (int,string){
+
+	return l.Priority,l.Name
+
+}
+func (l NewLocalHookVariable) getHookFunc() func(interface{}) interface{}{
+
+	return l.HookFunc
+
+}
+
+
+
+
+func NewLocalHook(id string,priority int ,localHook string , functionOftheHook func(interface{})interface{}) LocalHook  {//functionofthehook get current record as a parameter and return updated record
+
+	return NewLocalHookVariable{
+		ID:id,
+		HookFunc:functionOftheHook,
+		Name:localHook,
+		Priority:priority,
 	}
 
 }
 
-func getTable2(colname,tableName string,typ reflect.Type) Table{
-
-	newTable:=Table{
-		Name:tableName,
-		Columns:[]string{"Id",colname},
-		ContainsArr:false,
-		ArrTables:nil,
-		ContainsEmbedded:false,
-		ColTypes:[]reflect.Type{reflect.TypeOf(0),typ},
-		EmbeddedTables:nil,
-
-
-	}
-
-	return newTable
-}
-
-func getTable(x interface{},tableName string) Table{
-
-
-	value:=reflect.ValueOf(x)
-
-	colnames:=fieldNames(x)
-	coltyps:=fieldTypes(x)
-
-	newTable:=Table{
-		Name:tableName,
-		ContainsEmbedded:false,
-		ContainsArr:false,
-
-	}
-
-	var newColnames []string
-	var newColtyps []reflect.Type
-
-	newColnames=append(newColnames,"Id")
-	newColtyps=append(newColtyps,reflect.TypeOf(0))//for integer type!
-
-	for i,v:=range coltyps{
-		if v.Kind()==reflect.Struct{
-            newColnames=append(newColnames,"EM_"+colnames[i]) //EM_ for embedded
-            newColtyps=append(newColtyps,reflect.TypeOf(0))
-            newTable.EmbeddedTables=append(newTable.EmbeddedTables,getTable(value.Field(i).Interface(),tableName+"_"+value.Type().Field(i).Name))
-            newTable.ContainsEmbedded=true
-            //added to table (parent)
-
-
-
-
-		}else if v.Kind()==reflect.Array||v.Kind()==reflect.Slice{
-			//newColnames=append(newColnames,"EMARR_"+colnames[i])//EMARR_ for slice or array types
-			newColtyps=append(newColtyps,reflect.TypeOf(0))//we store it as key to create relation its table
-			newTable.ContainsArr=true
-			if value.Field(i).Type().Elem().Kind()==reflect.Struct{//if the slice(or array) contain struct
-				newColnames=append(newColnames,"EMARR_AN_"+colnames[i])//EMARR_ for slice or array types
-				newTable.ArrTables=append(newTable.ArrTables,getTable(reflect.Zero(value.Field(i).Type().Elem()).Interface(),tableName+"_"+value.Type().Field(i).Name))
-
-
-			}else{//it is not struct
-				//we need a new function in this area , we do not need recursive anymore
-				newColnames=append(newColnames,"EMARR_"+value.Field(i).Type().Elem().Name()+"_"+colnames[i])//EMARR_ for slice or array types
-				newTable.ArrTables=append(newTable.ArrTables,getTable2(value.Type().Field(i).Name+"_"+value.Field(i).Type().Elem().Name(),tableName+"_"+value.Type().Field(i).Name,value.Field(i).Type().Elem()))
-
+func reorder(data []LocalHook, ids []string) []LocalHook {
+	n := len(data)
+	i := 0
+loop:
+	for i < n {
+		r := data[i]
+		for _, id := range ids {
+			if id == r.getID() {
+				data[i] = data[n-1]
+				n--
+				continue loop
 			}
-
-		}else{
-
-			//for normal types
-			newColnames=append(newColnames,colnames[i]+"_"+value.Field(i).Type().Name())
-			newColtyps=append(newColtyps,v)
-
 		}
+		i++
 	}
+	return data[0:n]
+}
 
-	newTable.Columns=newColnames
-	newTable.ColTypes=newColtyps
+type byPriority []LocalHook
 
-	return newTable
+func (m byPriority) Len() int { return len(m) }
+
+func (m byPriority) Less(i, j int) bool {
+	p,_:=m[i].getSign()
+	p2,_:=m[j].getSign()
+	return p < p2
+}
+func (m byPriority) Swap(i, j int) {m[i], m[j] = m[j], m[i]}
+
+//local hooks end
+
+/*
+
+type GlobalHook interface {
+
+	BeforeAdd(interface{}) interface{}
+	AfterAdd(interface{}) interface{}
+	BeforeDelete(interface{}) interface{}
+	AfterDelete(interface{})interface{}
+	BeforeUpdate(interface{})interface{}
+	AfterUpdate(interface{})interface{}
+	BeforeAddRange(interface{})interface{}
+	AfterAddRange(interface{})interface{}
 
 }
 
-func fieldNames(Astruct interface{}) (fieldNames []string){
-	value:=reflect.ValueOf(Astruct)
-	for i:=0;i<value.NumField();i++{
-		fieldNames=append(fieldNames,value.Type().Field(i).Name)
-	}
+// x.0,x.1,x.2,x.3,x.4,x.5... => ReplaceWith ''
 
-	return
-}
-
-func fieldTypes(Astruct interface{}) (types []reflect.Type){
-	value:=reflect.ValueOf(Astruct)
-
-	for i:=0;i<value.NumField();i++{
-		types=append(types,value.Type().Field(i).Type)
-	}
-
-	return types
-}
-
-func NewSliceFor(item interface{},len,cap int)(newSlice interface{}){
-	newSlice=reflect.MakeSlice(reflect.SliceOf(reflect.TypeOf(item)),len,cap)
-	return newSlice
-}
-
-func (c *Collection) Insert(x interface{}) {
-	keys:=getKeysAsSlice(c.List)
-	var newID int
-	if len(keys)==0{
-		newID=1
-	}else{
-		newID=keys[len(keys)-1]+1
-	}
-	//db insert start
-
-	setTuple(x,c.ITsTable.Name, newID,*c)
-
-	//db insert
-
-	if len(keys)==0{
-		c.List[1]=x
-	}else{
-		c.List[newID]=x //inserted!
-	}
-
+type OrcaLanguage struct{
 
 }
 
-func (c *Collection) Delete(obj interface{}) {
+func(lang OrcaLanguage) Run(intermediateLanguage OLTask,item interface{}) interface{}{
 
-	for k,v:=range c.List{
-		if reflect.DeepEqual(v,obj){
-			//db delete start
-			deleteTuple(c.ITsTable,k,*c)
-			//delete finish
-			delete(c.List,k)//delete item from map
-			break
-		}
-	}
-}
+	fnum:=intermediateLanguage.TheFieldNum
+	val:=reflect.ValueOf(item)
 
-func (c *Collection) DeleteALL(){
+	for i:=0;i< len(intermediateLanguage.Tasks);i++{
+		onTask:=intermediateLanguage.Tasks[i]
+		switch onTask.TheTask {
+		case ReplaceWith:
 
-	deleteTable(c.ITsTable,*c)
-	c.List=make(map[int]interface{})
-
-}
-
-func (c *Collection) Update(old interface{},new interface{}){
-
-	var Ids []int
-
-	for k,v:=range c.List{
-
-		if reflect.DeepEqual(v,old){
-			Ids=append(Ids,k) //this Ids will be update in database side
-			c.List[k]=new //update completed!
-		}
-
-	}
-
-	//Update start
-	if len(Ids)>0{ //check
-
-	 updateTuple(new,c.ITsTable.Name,Ids,*c)
-
-	}
-	//update finish
-
-}
-
-func updateTuple(new interface{},tableName string,Ids []int,collection Collection){//it uses insert and delete we'll replace with recursive update in next version
-
-	for _,Id:=range Ids{
-		deleteTuple(collection.ITsTable,Id,collection)
-	}
-	for _,Id:=range Ids{
-		setTuple(new,tableName,Id,collection)
-	}
-
-
-}
-
-func (c Collection) ToSlice() []interface{}{
-	slice:=make([]interface{},0,1)
-
-	for _,v:=range c.List{
-		slice=append(slice,v)
-	}
-
-	return slice
-}
-
-/*func getUpdateQuery(olds map[int]interface{},diff map[int]interface{},tableName string, Id int, collection Collection) string{
-	colNames:=getColumnNames(collection.data,tableName)
-	var Query string
-	Query="UPDATE "+tableName+" SET "
-
-	for k,_:=range diff{
-		Query+=""+colNames[k+1]+"=? ,"
-	}
-
-	Query+=" WHERE Id=? AND "
-
-	keys:=getKeysAsSlice(olds)
-
-	for k,_:=range olds{
-		if keys[len(keys)-1]==k{
-			Query+=" "+colNames[k+1]+"=? "
-		}else{
-			Query+=" "+colNames[k+1]+"=? AND"
-		}
-
-	}
-
-	return Query
-
-}*/
-
-
-
-
-/*func getUpdateQuery(t Table,Id int,diff map[int]interface{},collection Collection) []string{
-	tables:=getAllTableNames(t)
-	var queries []string
-	var query string
-
-	for _,v :=range tables{
-		columns:=getColumnNames(collection.data,v)
-		columns=columns[1:]
-		query="UPDATE "+v+" SET "
-		for i,_:=range diff{
-			if i==0{
-				query+=columns[i]+"=?"
-			}else{
-				query+=","+columns[i]+"=?"
+			switch intermediateLanguage.Value[i].(type) {
+			case string:
+				val.Field(fnum).SetString(reflect.ValueOf(intermediateLanguage.Value[i]).String())
+			case int,int8,int16,int32,int64:
+				val.Field(fnum).SetInt(reflect.ValueOf(intermediateLanguage.Value[i]).Int())
+			case bool:
+				val.Field(fnum).SetBool(reflect.ValueOf(intermediateLanguage.Value[i]).Bool())
+			case float32,float64:
+				val.Field(fnum).SetFloat(reflect.ValueOf(intermediateLanguage.Value[i]).Float())
 			}
 
 		}
-
-		query+=" WHERE Id==?"
-
-
-        queries=append(queries,query)
-
 	}
 
-	return queries
 
-}*/
-
-func deleteTable(t Table,collection Collection){
-	tables:=getAllTableNames(t)
-
-	for _,v:=range tables{
-
-		res,err:=collection.data.db.Exec("DELETE FROM  "+v)
-
-
-		Check(err)
-
-		_=res
-	}
-}
-
-func deleteTuple(t Table,Id int,collection Collection){
-
-
-	tables:=getAllTableNames(t)
-
-	for _,v:=range tables{
-
-
-		res,err:=collection.data.db.Exec("DELETE FROM  "+v+" WHERE Id==?",Id)
-
-
-		Check(err)
-
-		_=res
-	}
-
+	return val
 
 }
 
-func getAllTableNames(t Table) []string{
-	var queries []string
+const(
 
-	var emptytt []Table
-	var tt = t
-	for tt.ContainsArr||tt.ContainsEmbedded{
-		emptytt=emptytt[:0]
-		emptytt=append(emptytt,tt.ArrTables...)
-		emptytt=append(emptytt,tt.EmbeddedTables...)
-		for _,v:=range emptytt{
-			queries=append(queries,v.Name)
-			tt=v
-		}
+	Start2="x"
+	Dot="."
+	IfEqual="Equal"
+	IfNotEqual="IfNotEqual"
+	LessThan="LessThan"
+	LessThanOrEqual="LessThanOrEqual"
+	GreaterThan="GreaterThan"
+	GreaterThanOrEqual="GreaterThanOrEqual"
+	ReplaceWith="ReplaceWith"
+	Variable="{Orca}"
+	Add="Add"
 
-	}
+)
 
-	var ttt=t
-	var emptytt2 []Table
-	for ttt.ContainsEmbedded||ttt.ContainsArr{
-		emptytt2=emptytt2[:0]
-		emptytt2=append(emptytt2,ttt.EmbeddedTables...)
-		emptytt2=append(emptytt2,ttt.ArrTables...)
-		for _,v:=range emptytt2{
-			queries=append(queries,v.Name)
-			ttt=v
-		}
-	}
 
-	queries=append(queries,t.Name)
 
-	queries=unique(queries)
-
-	return queries
+type Task struct {
+	Order int
+	TheTask string
 }
 
-func setTuples(slice interface{},tableName string,Id int,collection Collection){
+type OLTask struct {
 
-
-	sl:=reflect.ValueOf(slice)
-	Tx,err:=collection.data.db.Begin()
-
-	Check(err)
-	for i:=0;i<sl.Len();i++ {
-
-		stmt, err := Tx.Prepare(getInsertQuery(tableName, getColumnNames(collection.data, tableName)))
-		Check(err)
-		res, err := stmt.Exec(Id,sl.Index(i).Interface())
-		Check(err)
-		if err != nil {
-			err = Tx.Rollback()
-			Check(err)
-		}
-		_ = res
-
-
-
-		err=stmt.Close()
-		Check(err)
-	}
-	err = Tx.Commit()
-	Check(err)
-
-
-
-
+   TheFieldNum int
+   Tasks []Task
+   Value []interface{}
 
 }
-func setTuple(x interface{},tableName string,Id int,collection Collection){
-	value:=reflect.ValueOf(x)
-	colNames:=getColumnNames(collection.data,tableName)
-	myMap:=make(map[string]interface{})
 
-	for i,v:=range colNames{
-		if strings.Contains(v,"EMARR_"){//array or slice field!
-		s:=strings.Split(v,"_")
-		setTuples(value.Field(i-1).Interface(),tableName+"_"+s[2],Id,collection)
-		myMap[v]=Id //like foreign key
-		/*s:=strings.Split(v,"_")
-		myMap[v]=Id //like foreign key
-		setTuple(value.Field(i-1).Interface(),tableName+"_"+s[2],Id,collection)*/
-
-		}else if strings.Contains(v,"EM_"){//for embedded field
-		s:=strings.Split(v,"_")
-		myMap[v]=Id//like foreign key
-		setTuple(value.Field(i-1).Interface(),tableName+"_"+s[1],Id,collection)
-
-		}else if v=="Id"{
-
-		myMap[v]=Id
-
-		}else{//for normal types
-
-		myMap[v]=value.Field(i-1).Interface()
-		}
-	}
-
-	Tx,err:=collection.data.db.Begin()
-	Check(err)
-	stmt,err:=Tx.Prepare(getInsertQuery(tableName,colNames))
-	Check(err)
-	giveMeaSlice:=orderForInsert(myMap,colNames)
-	res,err:=stmt.Exec(giveMeaSlice...)//passed
-	if err!=nil{
-		err=Tx.Rollback()
-		Check(err)
-	}
-
-	err=Tx.Commit()
-
-	Check(err)
-	err=stmt.Close()
-	Check(err)
-
-	_=res
-	_=Tx
+type Scanner struct {
+    ReadedCode OLTask
 }
 
-func orderForInsert(myMap map[string]interface{},cols []string) []interface{}{
-	slice:=make([]interface{},0,1)
-    for _,v:=range cols{
-    	slice=append(slice,myMap[v])
-	}
-	return slice
-}
+func (sc *Scanner) Read(s string,k ...interface{}) (OLTask,error){
+	 str := ""
+	 counter:=0
+	 orcaCounter:=0
+
+	 var myTasks OLTask
+
+	 fieldassigned:=false
 
 
-func getInsertQuery(tableName string , Columns []string) string{
+	 waitforField:=false
+	 waitforStart:=true
+	 waitforReplaceC:=false
+	 waitforReplace:=false
+	 waitforDot:=false
+     waitforDefault:=false
+     waitforVariable:=false
+     waitforCMD:=false
+	 startErr:=waitforDot||waitforField||waitforReplace||waitforReplaceC||waitforDefault||waitforVariable
+     dotErr:=waitforReplaceC||waitforReplace||waitforField||waitforStart||waitforDefault||waitforVariable
+    _=dotErr
 
-	var Query string = "INSERT INTO "+tableName+"("
+	for _, c := range s {
+		str += string(c)
 
-	for i:=0;i< len(Columns);i++{//range over the columns name
+		switch str {
 
-		if i==0{
-			Query+=Columns[i]+" "
-		}else{
-			Query+=","+Columns[i]+" "
-		}
+		case Start2:
+			if startErr{
+				return OLTask{},errors.New("x was expected!")
+			}
+			waitforStart=false
+			waitforDot=true
+			str=""
+		case Dot:
 
+			waitforDot=false
+			waitforField=true
+			str=""
 
+		case IfEqual:
+			if waitforCMD{
+				waitforVariable=true
 
+			}
+		case IfNotEqual:
+			if waitforCMD{
+				waitforVariable=true
 
-	}
-	Query+=")"
+			}
+		case LessThan:
+			if waitforCMD{
+				waitforVariable=true
 
-	Query+=" VALUES ("
-	for i:=0;i< len(Columns);i++{
-		if i==0{
-			Query+="? "
-		}else{
-			Query+=","+"? "
-		}
-	}
-	Query+=" )"
+			}
+		case LessThanOrEqual:
+			if waitforCMD{
+				waitforVariable=true
 
-	return Query
-}
+			}
+		case GreaterThan:
+			if waitforCMD{
+				waitforVariable=true
 
-
-
-/*func insertTuple(x interface{},tableName string,Id int){
-	value:=reflect.ValueOf(x)
-
-	colnames:=fieldNames(x)
-	coltyps:=fieldTypes(x)
-
-	cache:=make([]interface{}, len(colnames)+1, len(colnames)+1)
-
-	cache=append(cache,Id)//firstly add Id
-
-	for i,v:=range coltyps{
-		if v.Kind()==reflect.Struct{
-
-
-
-		}else if v.Kind()==reflect.Array||v.Kind()==reflect.Slice{
-		//EMARR_ for slice or array types
-
-			if value.Field(i).Type().Elem().Kind()==reflect.Struct{//if the slice(or array) contain struct
-
-			}else{//it is not struct
+			}
+		case GreaterThanOrEqual:
+			if waitforCMD{
+				waitforVariable=true
 
 
 			}
+		case ReplaceWith:
+			if waitforCMD{
+                 waitforVariable=true
+                 myTasks.Tasks=append(myTasks.Tasks,Task{
+                 	Order:counter,
+                 	TheTask:ReplaceWith,
+				 })
+                 str=""
+			}
 
-		}else{//for normal types
+		case Add:
+		case Variable:
+			myTasks.Value=append(myTasks.Value,k[orcaCounter])
+			orcaCounter++
 
-         cache[i+1]=reflect.ValueOf(x).Field(i).Interface()
+
+		case " ":
+			str=""
+		case "0","1","2","3","4","5","6","7","8","9":
+
+			i,err:=strconv.Atoi(str)
+			if err!=nil{
+				return OLTask{},err
+			}
+			if fieldassigned==false{
+				myTasks.TheFieldNum=i
+				fieldassigned=true
+			}
+
+			myTasks.Tasks=append(myTasks.Tasks,Task{
+				Order:counter,
+				TheTask:Dot,
+			})
+			myTasks.Value=append(myTasks.Value,"")
+			str=""
+			waitforDot=false
+			waitforCMD=true
+
+		default:
+
+
 
 
 		}
 	}
 
+
+
+	return myTasks,nil
+}
+
+
+func SetGlobalHook(orcaLanguage string , s ...interface{}){
 
 
 
 }
 
-/*func insertStruct(x interface{},collection Collection){
-	TheStruct:=reflect.ValueOf(x)
+func Start(){
 
-	var queries []string
-	tables:=getInsertTables(collection.ITsTable)
-	for _,v:=range tables{
-		queries=append(queries,getInsertQuery(v))
+ //start client and server
+
+
+	tmpAddr:=os.TempDir()
+	pid:=os.Getpid()
+
+	if _,err:=os.Stat(tmpAddr+"/Orca"+strconv.Itoa(pid)+".sock");err==nil{
+		//file exist
+		os.Remove(tmpAddr+"/LeaderOrca.sock")
 	}
+
+	l,err:= net.Listen("unix",tmpAddr+"/Orca"+strconv.Itoa(pid)+".sock")
+	Check(err)
+
+	go startServerForNormalOrca(l)
+
+	if _,err:=os.Stat(tmpAddr+"/Orca2"+strconv.Itoa(pid)+".sock");err==nil{
+		//file exist
+		os.Remove(tmpAddr+"/LeaderOrca.sock")
+	}
+
+	l2,err:= net.Listen("unix",tmpAddr+"/Orca2"+strconv.Itoa(pid)+".sock")
+	Check(err)
+
+	go startServerForNormalOrcatoMessaging(l2)
+
+	//now orca send pid number to leader orca
+
+	msg:=HelloOrca{
+		MyPid:pid,
+		Flag:0,//0 means register
+	}
+
+	go startClientandSendMessage(msg)
 
 }
 
-func getInsertTables(t Table) []Table {
-	var queries []Table
+func startClientandSendMessage(orcaSays HelloOrca){
 
-	var emptytt []Table
-	var tt = t
-	for tt.ContainsArr||tt.ContainsEmbedded{
-		emptytt=emptytt[:0]
-		emptytt=append(emptytt,tt.ArrTables...)
-		emptytt=append(emptytt,tt.EmbeddedTables...)
-		for _,v:=range emptytt{
-			queries=append(queries,v)
-			tt=v
-		}
+	tmpAddr:=os.TempDir()
+	var network bytes.Buffer
+	c,err:=net.Dial("unix",tmpAddr+"/LeaderOrca2.sock")
+	Check(err)
+	gob.Register(HelloOrca{})
+	enc:=gob.NewEncoder(c)
+	enc.Encode(orcaSays)
 
-	}
-
-	var ttt=t
-	var emptytt2 []Table
-	for ttt.ContainsEmbedded||ttt.ContainsArr{
-		emptytt2=emptytt2[:0]
-		emptytt2=append(emptytt2,ttt.EmbeddedTables...)
-		emptytt2=append(emptytt2,ttt.ArrTables...)
-		for _,v:=range emptytt2{
-			queries=append(queries,v)
-			ttt=v
-		}
-	}
-
-	queries=append(queries,t)
-
-	queries=unique2(queries)
-
-	return queries
+	_,err=c.Write(network.Bytes())
+	Check(err)
 }
 
-func getInsertQuery(t Table) string{
+func startClient(pid int,task OLTask){
 
-	var Query string = "INSERT INTO "+t.Name+"("
+	tmpAddr:=os.TempDir()
+	var network bytes.Buffer
+	c,err:=net.Dial("unix",tmpAddr+"/Orca"+strconv.Itoa(pid)+".sock")
+	Check(err)
+	gob.Register(OLTask{})
+	enc:=gob.NewEncoder(c)
+	enc.Encode(task)
 
-	for i:=0;i< len(t.Columns);i++{//range over the columns name
-
-		if i==0{
-			Query+=t.Columns[i]+" "
-		}else{
-			Query+=","+t.Columns[i]+" "
-		}
-
-
-
-
-	}
-	Query+=")"
-
-	Query+=" VALUES ("
-	for i:=0;i< len(t.Columns);i++{
-		if i==0{
-			Query+="? "
-		}else{
-			Query+=","+"? "
-		}
-	}
-	Query+=" )"
-
-	return Query
-}*/
-
-func getKeysAsSlice(mp map[int]interface{}) []int{
-	keys:=make([]int,0,1)
-
-	for k:=range mp {
-		keys=append(keys,k)
-	}
+	_,err=c.Write(network.Bytes())
+	Check(err)
 
 
-	return keys
+
+
 }
+type HelloOrca struct {
+	MyPid int
+	Flag int
+}
+
+func startServerForNormalOrcatoMessaging(listener net.Listener){
+	for {
+		fd , err:=listener.Accept()
+		Check(err)
+		gob.Register(HelloOrca{})
+		dec := gob.NewDecoder(fd)
+		var v HelloOrca
+		dec.Decode(&v)
+		fmt.Println(v)
+
+	}
+}
+
+func startServerForNormalOrca(listener net.Listener){
+	for {
+		fd , err:=listener.Accept()
+		Check(err)
+		gob.Register(OLTask{})
+		dec := gob.NewDecoder(fd)
+		var v OLTask
+		dec.Decode(&v)
+		fmt.Println(v)
+
+	}
+}
+var globalHook OLTask
+var pidOfOrcas []int
+var mux sync.Mutex
+func startServerForMessage(listener net.Listener){
+	for {
+		fd , err:=listener.Accept()
+		Check(err)
+		gob.Register(HelloOrca{})
+		dec := gob.NewDecoder(fd)
+		var v HelloOrca
+		dec.Decode(&v)
+
+		if v.Flag==0{
+			//register operation
+			mux.Lock()
+			pidOfOrcas=append(pidOfOrcas,v.MyPid)
+			mux.Unlock()
+			startClient(v.MyPid,globalHook)
+
+		}
+
+		fmt.Println(v)
+
+	}
+}
+
+func startServer(listener net.Listener){
+	for {
+		fd , err:=listener.Accept()
+		Check(err)
+		gob.Register(OLTask{})
+		dec := gob.NewDecoder(fd)
+		var v OLTask
+		dec.Decode(&v)
+		fmt.Println(v)
+
+	}
+}
+
+func StartAsLeader(){
+  //start client and server
+
+	/*  var s Scanner
+
+		   sonuc,err:= s.Read("x.9 ReplaceWith {Orca}","merhaba")
+		   Check(err)
+		   mux.Lock()
+		   globalHook=sonuc
+		   mux.Unlock()
+
+
+	tmpAddr:=os.TempDir()
+
+	if _,err:=os.Stat(tmpAddr+"/LeaderOrca.sock");err==nil{
+		//file exist
+		os.Remove(tmpAddr+"/LeaderOrca.sock")
+	}
+
+	l,err:= net.Listen("unix",tmpAddr+"/LeaderOrca.sock")
+	Check(err)
+
+	go startServer(l)
+
+	if _,err:=os.Stat(tmpAddr+"/LeaderOrca2.sock");err==nil{
+		//file exist
+		os.Remove(tmpAddr+"/LeaderOrca2.sock")
+	}
+
+	l2,err:=net.Listen("unix",tmpAddr+"/LeaderOrca2.sock")
+	Check(err)
+
+	go startServerForMessage(l2)
+
+
+
+}
+
+
+ */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
