@@ -354,7 +354,12 @@ func getTupleToStruct2(Data *Database,x interface{},Id,tableName string) interfa
 }
 
 
+
+
+
+
 func getTupleToStruct(Data *Database,x interface{},Id,tableName string) reflect.Value {//x must be a struct
+
 
 
 	//newStruct:=reflect.ValueOf(newStructLike(x))
@@ -373,6 +378,7 @@ func getTupleToStruct(Data *Database,x interface{},Id,tableName string) reflect.
 	}
 
 	row:=Data.db.QueryRow("SELECT * FROM "+tableName+" WHERE Id=="+Id)
+
 
 	err:=row.Scan(cache...)
 
@@ -443,17 +449,37 @@ func getTupleToStruct(Data *Database,x interface{},Id,tableName string) reflect.
 
 			default://default catches array of struct
 
-				/*TheSlice:=make([]interface{},0,1)
+				//TheSlice:=make([]interface{},0,1)
 
 				cacheStruct:=newStruct.Field(i)
 
+
+
+				elemType := cacheStruct.Type().Elem()
+
+				elemSlice := reflect.MakeSlice(reflect.SliceOf(elemType), 0,0)
+
 				min:=getMinId(Data,tableName+"_"+s[2])
 				max:=getMAXId(Data,tableName+"_"+s[2])
+				_=max
 				for i:=min;i<=max;i++{
-					strc:=getTupleToStruct(Data,cacheStruct.Interface(),strconv.Itoa(i),tableName+"_"+s[2])
-					TheSlice=append(TheSlice,strc)
 
-				}*/
+					intPtr:=reflect.New(cacheStruct.Type().Elem())
+					b:=intPtr.Elem().Interface()
+
+
+
+
+					
+					strc:=getTupleToStruct(Data,b,strconv.Itoa(i),tableName+"_"+s[2])
+
+
+					elemSlice=reflect.Append(elemSlice,strc)
+					//TheSlice=append(TheSlice,strc)
+
+				}
+
+				newStruct.Field(i).Set(elemSlice)
 
 
 
@@ -500,6 +526,8 @@ func getTupleToStruct(Data *Database,x interface{},Id,tableName string) reflect.
 		}
 
 	}
+
+
 
 	return newStruct
 
@@ -1121,20 +1149,30 @@ func setTuples(slice interface{},tableName string,Id int,collection Collection){
 
 
 	sl:=reflect.ValueOf(slice)
+	//fmt.Println(slice)
 	Tx,err:=collection.data.db.Begin()
 
 	Check(err)
 	for i:=0;i<sl.Len();i++ {
 
 		stmt, err := Tx.Prepare(getInsertQuery(tableName, getColumnNames(collection.data, tableName)))
+
 		Check(err)
-		res, err := stmt.Exec(Id,sl.Index(i).Interface())
+        bak:=getColumnNames(collection.data, tableName)
+        slc:=make([]interface{},0)
+        slc=append(slc,Id)
+        for k:=0;k< len(bak)-1;k++{
+			slc=append(slc,sl.Index(i).Field(k).Interface())
+		}
+		res, err := stmt.Exec(slc...)
 		Check(err)
+		_ = res
+
 		if err != nil {
 			err = Tx.Rollback()
 			Check(err)
 		}
-		_ = res
+
 
 
 
