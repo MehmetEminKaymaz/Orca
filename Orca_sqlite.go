@@ -1363,6 +1363,7 @@ func getKeysAsSlice(mp map[int]interface{}) []int{
 		keys=append(keys,k)
 	}
 
+	sort.Ints(keys)
 
 	return keys
 }
