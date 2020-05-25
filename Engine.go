@@ -59,7 +59,7 @@ func Use(yourDb string,options IOptions) (IDatabase,error){
 	case MySQL:
 		return nil,nil
 	case MSSQL:
-		return nil,nil
+		return getMssqlDB(options.Options()[2],options.Options()[0],options.Options()[1]),nil
 	case SQLite:
 		dname:=options.Options()[0]
 		path:=options.Options()[1]
