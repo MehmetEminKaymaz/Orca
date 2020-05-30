@@ -363,6 +363,7 @@ func(config ormConfig) generateSQLADD(withForeignID bool) string{
 	}
      return query
 }
+
 func(config ormConfig) generateSQLUPDATE(IndexOfnewValues []int) string{
 	stringList:=strings.Split(config.getColumnNamesInOrder("","="),",")
 	query:="UPDATE "+config.TableName+" SET "
@@ -421,6 +422,463 @@ func(config ormConfig) getAltTableByName(name string) ormConfig{
 	return ormConfig{}
 }
 
+func getCountOfTuples(id int,Mssql *MssqlDB,tableName string) int{
+	var result int = 0
+	row:=Mssql.Database.QueryRow("Select Count(*) from " +tableName + " WHERE ForeignID=@ForeignID",sql.Named("ForeignID",id))
+	row.Scan(&result)
+	return  result
+}
+
+
+func(config ormConfig) readStructFromDB(Id int,Mssql *MssqlDB,x interface{},isRecursiveCall bool,recNumber int) interface{}{
+	//newStruct:=reflect.New(reflect.ValueOf(x).Type()).Elem()
+	//value:=reflect.ValueOf(newStruct)
+	var allOfThem []interface{}
+	if !isRecursiveCall{
+		recNumber=0
+	}
+	ptr:=reflect.New(reflect.TypeOf(x))
+	value:=ptr.Elem()
+	for i:=0;i<value.NumField();i++{
+		typeOfValue:=config.TypeAnalysis[i]
+		switch typeOfValue {
+		case "NORMAL":
+			switch config.CinsAnalysis[i] {
+			case "string":
+				if isRecursiveCall{
+					var strArr []string
+					var str string
+					rows,err:=Mssql.Database.Query("SELECT "+config.ColumnNames[i]+" FROM "+config.TableName+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+					Check(err)
+					defer rows.Close()
+					for rows.Next(){
+						rows.Scan(&str)
+						strArr=append(strArr,str)
+					}
+					allOfThem=append(allOfThem,strArr)
+				}else{
+					var str string
+					row:=Mssql.Database.QueryRow("SELECT "+config.ColumnNames[i]+" FROM "+config.TableName+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+					row.Scan(&str)
+					value.Field(i).SetString(str)
+				}
+			case "int":
+				if isRecursiveCall{
+					var intARR []int64
+					var integer int
+					rows,err:=Mssql.Database.Query("SELECT "+config.ColumnNames[i]+" FROM "+config.TableName+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+					Check(err)
+					defer rows.Close()
+					for rows.Next(){
+						rows.Scan(&integer)
+						intARR=append(intARR,int64(integer))
+					}
+					allOfThem=append(allOfThem,intARR)
+				}else{
+					var integer int
+					row:=Mssql.Database.QueryRow("SELECT "+config.ColumnNames[i]+" FROM "+config.TableName+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+					row.Scan(&integer)
+					value.Field(i).SetInt(int64(integer))
+				}
+			case "bool":
+				if isRecursiveCall{
+					var boolARR []bool
+					var tf bool
+					rows,err:=Mssql.Database.Query("SELECT "+config.ColumnNames[i]+" FROM "+config.TableName+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+					Check(err)
+					defer rows.Close()
+					for rows.Next(){
+						rows.Scan(&tf)
+						boolARR=append(boolARR,tf)
+					}
+					allOfThem=append(allOfThem,boolARR)
+				}else{
+					var tf bool
+					row:=Mssql.Database.QueryRow("SELECT "+config.ColumnNames[i]+" FROM "+config.TableName+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+					row.Scan(&tf)
+					value.Field(i).SetBool(tf)
+				}
+			case "float32","float":
+				if isRecursiveCall{
+					var floatARR []float64
+					var fl float32
+					rows,err:=Mssql.Database.Query("SELECT "+config.ColumnNames[i]+" FROM "+config.TableName+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+					Check(err)
+					defer rows.Close()
+					for rows.Next(){
+						rows.Scan(&fl)
+						floatARR=append(floatARR,float64(fl))
+					}
+					allOfThem=append(allOfThem,floatARR)
+				}else{
+					var fl float32
+					row:=Mssql.Database.QueryRow("SELECT "+config.ColumnNames[i]+" FROM "+config.TableName+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+					row.Scan(&fl)
+					value.Field(i).SetFloat(float64(fl))
+				}
+			case "float64":
+				if isRecursiveCall{
+					var floatARR []float64
+					var fl float64
+					rows,err:=Mssql.Database.Query("SELECT "+config.ColumnNames[i]+" FROM "+config.TableName+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+					Check(err)
+					defer rows.Close()
+					for rows.Next(){
+						rows.Scan(&fl)
+						floatARR=append(floatARR,fl)
+					}
+					allOfThem=append(allOfThem,floatARR)
+				}else{
+					var fl float64
+					row:=Mssql.Database.QueryRow("SELECT "+config.ColumnNames[i]+" FROM "+config.TableName+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+					row.Scan(&fl)
+					value.Field(i).SetFloat(fl)
+				}
+			default:
+
+			}
+		case "SLICE":
+			switch strings.Split(config.CinsAnalysis[i],"_")[1] {
+			case "string":
+				var stringARRorSLI []string
+				rows,err:=Mssql.Database.Query("SELECT Value FROM "+config.TableName+"_"+strconv.Itoa(i)+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+				Check(err)
+				defer rows.Close()
+				for rows.Next(){
+					str:=""
+					rows.Scan(&str)
+					stringARRorSLI=append(stringARRorSLI,str)
+				}
+				value.Field(i).Set(reflect.ValueOf(stringARRorSLI))
+				allOfThem=append(allOfThem,stringARRorSLI)
+			case "int":
+				var intARRorSLI []int
+				rows,err:=Mssql.Database.Query("SELECT Value FROM "+config.TableName+"_"+strconv.Itoa(i)+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+				Check(err)
+				defer rows.Close()
+				for rows.Next(){
+					var integer int
+					rows.Scan(&integer)
+					intARRorSLI=append(intARRorSLI,integer)
+				}
+				value.Field(i).Set(reflect.ValueOf(intARRorSLI))
+				allOfThem=append(allOfThem,intARRorSLI)
+			case "bool":
+				var boolARRorSLI []bool
+				rows,err:=Mssql.Database.Query("SELECT Value FROM "+config.TableName+"_"+strconv.Itoa(i)+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+				Check(err)
+				defer rows.Close()
+				for rows.Next(){
+					var bl bool
+					rows.Scan(&bl)
+					boolARRorSLI=append(boolARRorSLI,bl)
+				}
+				value.Field(i).Set(reflect.ValueOf(boolARRorSLI))
+				allOfThem=append(allOfThem,boolARRorSLI)
+			case "float32","float":
+				var floatARRorSLI []float32
+				rows,err:=Mssql.Database.Query("SELECT Value FROM "+config.TableName+"_"+strconv.Itoa(i)+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+				Check(err)
+				defer rows.Close()
+				for rows.Next(){
+					var fl float32
+					rows.Scan(&fl)
+					floatARRorSLI=append(floatARRorSLI,fl)
+				}
+				value.Field(i).Set(reflect.ValueOf(floatARRorSLI))
+				allOfThem=append(allOfThem,floatARRorSLI)
+			case "float64":
+				var floatARRorSLI []float64
+				rows,err:=Mssql.Database.Query("SELECT Value FROM "+config.TableName+"_"+strconv.Itoa(i)+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+				Check(err)
+				defer rows.Close()
+				for rows.Next(){
+					var fl float64
+					rows.Scan(&fl)
+					floatARRorSLI=append(floatARRorSLI,fl)
+				}
+				value.Field(i).Set(reflect.ValueOf(floatARRorSLI))
+				allOfThem=append(allOfThem,floatARRorSLI)
+			default:
+
+			}
+		case "ARR":
+			switch strings.Split(config.CinsAnalysis[i],"_")[1] {
+			case "string":
+				var stringARRorSLI []string
+				rows,err:=Mssql.Database.Query("SELECT Value FROM "+config.TableName+"_"+strconv.Itoa(i)+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+				Check(err)
+				defer rows.Close()
+				for rows.Next(){
+					str:=""
+					rows.Scan(&str)
+					stringARRorSLI=append(stringARRorSLI,str)
+				}
+				for ar:=0;ar<value.Field(i).Len();ar++{
+					value.Field(i).Index(ar).SetString(stringARRorSLI[ar])
+				}
+				allOfThem=append(allOfThem,stringARRorSLI)
+			case "int":
+				var intARRorSLI []int
+				rows,err:=Mssql.Database.Query("SELECT Value FROM "+config.TableName+"_"+strconv.Itoa(i)+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+				Check(err)
+				defer rows.Close()
+				for rows.Next(){
+					var integer int
+					rows.Scan(&integer)
+					intARRorSLI=append(intARRorSLI,integer)
+				}
+				for ar:=0;ar<value.Field(i).Len();ar++{
+					value.Field(i).Index(ar).SetInt(int64(intARRorSLI[ar]))
+				}
+				var intARR []int64
+				for _,v:= range intARRorSLI{
+					intARR=append(intARR,int64(v))
+				}
+				allOfThem=append(allOfThem,intARR)
+			case "bool":
+				var boolARRorSLI []bool
+				rows,err:=Mssql.Database.Query("SELECT Value FROM "+config.TableName+"_"+strconv.Itoa(i)+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+				Check(err)
+				defer rows.Close()
+				for rows.Next(){
+					var bl bool
+					rows.Scan(&bl)
+					boolARRorSLI=append(boolARRorSLI,bl)
+				}
+				for ar:=0;ar<value.Field(i).Len();ar++{
+					value.Field(i).Index(ar).SetBool(boolARRorSLI[ar])
+				}
+				allOfThem=append(allOfThem,boolARRorSLI)
+			case "float32","float":
+				var floatARRorSLI []float32
+				rows,err:=Mssql.Database.Query("SELECT Value FROM "+config.TableName+"_"+strconv.Itoa(i)+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+				Check(err)
+				defer rows.Close()
+				for rows.Next(){
+					var fl float32
+					rows.Scan(&fl)
+					floatARRorSLI=append(floatARRorSLI,fl)
+				}
+				for ar:=0;ar<value.Field(i).Len();ar++{
+					value.Field(i).Index(ar).SetFloat(float64(floatARRorSLI[ar]))
+				}
+				var floatARR []float64
+				for _,v:=range floatARRorSLI{
+					floatARR=append(floatARR,float64(v))
+				}
+				allOfThem=append(allOfThem,floatARR)
+			case "float64":
+				var floatARRorSLI []float64
+				rows,err:=Mssql.Database.Query("SELECT Value FROM "+config.TableName+"_"+strconv.Itoa(i)+" WHERE ForeignID=@ForeignID",sql.Named("ForeignID",Id))
+				Check(err)
+				defer rows.Close()
+				for rows.Next(){
+					var fl float64
+					rows.Scan(&fl)
+					floatARRorSLI=append(floatARRorSLI,fl)
+				}
+				for ar:=0;ar<value.Field(i).Len();ar++{
+					value.Field(i).Index(ar).SetFloat(float64(floatARRorSLI[ar]))
+				}
+				var floatARR []float64
+				for _,v:=range floatARRorSLI{
+					floatARR=append(floatARR,float64(v))
+				}
+				allOfThem=append(allOfThem,floatARR)
+			default:
+
+			}
+		case "EMARR":
+
+			underlyingValue:=value.Field(i).Type().Elem()
+			olusturulanConfigBu := createOrmConfig(reflect.New(underlyingValue).Elem().Interface(),config.TableName+"_"+strconv.Itoa(i))
+			gelen:=reflect.ValueOf(olusturulanConfigBu.readStructFromDB(Id,Mssql,reflect.New(underlyingValue).Elem().Interface(),true, value.Field(i).Len())) //it returns a slice, each element for a column
+            fmt.Println(gelen)
+			for turn:=0;turn<value.Field(i).Len();turn++{
+
+				for lol:=0;lol<gelen.Len();lol++{
+					switch olusturulanConfigBu.TypeAnalysis[lol] {
+					case "NORMAL":
+						fmt.Println(gelen.Index(lol))
+						fmt.Println(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn))
+						value.Field(i).Index(turn).Field(lol).Set(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn))
+						//value.Field(i).Index(turn).Field(lol).Set(gelen.Index(lol).Index(turn))
+					case "ARR":
+						for lollol:=0;lollol<gelen.Index(lol).Len();lollol++{
+							value.Field(i).Index(turn).Field(lol).Index(lollol).Set(gelen.Index(lol).Index(lollol))
+						}
+						/*for ii,vv:=range v{
+							value.Field(i).Index(turn).Field(lol).Index(ii).Set(vv)
+						}*/
+					case "SLICE":
+						value.Field(i).Index(turn).Field(lol).Set(gelen.Index(lol))
+					case "EMARR":
+						for lollol:=0;lollol<gelen.Index(lol).Len();lollol++{
+							value.Field(i).Index(turn).Field(lol).Index(lollol).Set(gelen.Index(lol).Index(lollol))
+						}
+						/*for ii,vv:=range v{
+							value.Field(i).Index(turn).Field(lol).Index(ii).Set(vv)
+						}*/
+					case "EMSLICE":
+						value.Field(i).Index(turn).Field(lol).Set(gelen.Index(lol))
+					case "EM":
+						    theTable:=olusturulanConfigBu.getAltTableByName(olusturulanConfigBu.AltTable[lol])
+							for d := 0; d < reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Len(); d++ {
+								switch theTable.CinsAnalysis[d]{
+								case "string":
+									value.Field(i).Index(turn).Field(lol).Field(d).Set(reflect.ValueOf(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Index(d).Interface()).Index(turn))
+								case "int":
+									value.Field(i).Index(turn).Field(lol).Field(d).SetInt(reflect.ValueOf(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Index(d).Interface()).Index(turn).Interface().(int64))
+								case "bool":
+									value.Field(i).Index(turn).Field(lol).Field(d).Set(reflect.ValueOf(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Index(d).Interface()).Index(turn))
+								case "float","float32","float64":
+									value.Field(i).Index(turn).Field(lol).Field(d).SetFloat(reflect.ValueOf(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Index(d).Interface()).Index(turn).Interface().(float64))
+								default:
+									value.Field(i).Index(turn).Field(lol).Field(d).Set(reflect.ValueOf(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Index(d).Interface()).Index(turn))
+
+								}
+							/*	if d==2{
+									value.Field(i).Index(turn).Field(lol).Field(d).SetInt(reflect.ValueOf(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Index(d).Interface()).Index(turn).Interface().(int64))
+								}else{
+									value.Field(i).Index(turn).Field(lol).Field(d).Set(reflect.ValueOf(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Index(d).Interface()).Index(turn))
+								}*/
+							}
+						//}
+						//fmt.Println(value.Field(i))
+						//fmt.Println(turn)
+						//fmt.Println(lol)
+
+						//  fmt.Println(gelen.Index(lol))
+
+						//fmt.Println(gelen.Index(lol).Interface())
+						//fmt.Println(reflect.ValueOf(gelen.Index(lol).Interface()).Len())
+						//fmt.Println(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Len())
+						//for columnCounter:=0;columnCounter<reflect.ValueOf(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn).Interface()).Index(0).Interface()).Len();columnCounter++ {
+
+						//fmt.Println(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn))
+						//fmt.Println(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn).Interface()).Index(0))
+						//fmt.Println(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn).Interface()).Len())
+						//fmt.Println(value.Field(i).Index(turn).Field(lol).Field(2))
+						//fmt.Println(value.Field(i).Index(turn).Field(lol).Type())
+						//fmt.Println(gelen.Index(lol).Index(turn))
+						//value.Field(i).Index(turn).Field(lol).Set(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn))
+						//value.Field(i).Index(turn).Field(lol).Set(gelen.Index(lol).Index(turn)) eskisi buydu
+					default:
+
+					}
+				}
+
+			}
+         	//value.Field(i).Set(reflect.ValueOf(olusturulanConfigBu.readStructFromDB(Id,Mssql,reflect.New(underlyingValue).Elem().Interface(),true,recNumber+1)))
+		case "EMSLICE":
+			underlyingValue:=value.Field(i).Type().Elem()
+			olusturulanConfigBu := createOrmConfig(reflect.New(underlyingValue).Elem().Interface(),config.TableName+"_"+strconv.Itoa(i))
+			countOfTuples := getCountOfTuples(Id,Mssql,olusturulanConfigBu.TableName)
+			fmt.Println(countOfTuples)
+			gelen:=reflect.ValueOf(olusturulanConfigBu.readStructFromDB(Id,Mssql,reflect.New(underlyingValue).Elem().Interface(),true, countOfTuples)) //it returns a slice, each element for a column
+			//fmt.Println(gelen)
+            value.Field(i).Set(reflect.MakeSlice(value.Field(i).Type(),countOfTuples,countOfTuples))
+			for turn:=0;turn<countOfTuples;turn++{
+
+				for lol:=0;lol<gelen.Len();lol++{
+					switch olusturulanConfigBu.TypeAnalysis[lol] {
+					case "NORMAL":
+						fmt.Println(gelen.Index(lol))
+						fmt.Println(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn))
+						value.Field(i).Index(turn).Field(lol).Set(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn))
+						//value.Field(i).Index(turn).Field(lol).Set(gelen.Index(lol).Index(turn))
+					case "ARR":
+						for lollol:=0;lollol<gelen.Index(lol).Len();lollol++{
+							value.Field(i).Index(turn).Field(lol).Index(lollol).Set(gelen.Index(lol).Index(lollol))
+						}
+						/*for ii,vv:=range v{
+							value.Field(i).Index(turn).Field(lol).Index(ii).Set(vv)
+						}*/
+					case "SLICE":
+						value.Field(i).Index(turn).Field(lol).Set(gelen.Index(lol))
+					case "EMARR":
+						for lollol:=0;lollol<gelen.Index(lol).Len();lollol++{
+							value.Field(i).Index(turn).Field(lol).Index(lollol).Set(gelen.Index(lol).Index(lollol))
+						}
+						/*for ii,vv:=range v{
+							value.Field(i).Index(turn).Field(lol).Index(ii).Set(vv)
+						}*/
+					case "EMSLICE":
+						value.Field(i).Index(turn).Field(lol).Set(gelen.Index(lol))
+					case "EM":
+						theTable:=olusturulanConfigBu.getAltTableByName(olusturulanConfigBu.AltTable[lol])
+						for d := 0; d < reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Len(); d++ {
+							switch theTable.CinsAnalysis[d]{
+							case "string":
+								value.Field(i).Index(turn).Field(lol).Field(d).Set(reflect.ValueOf(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Index(d).Interface()).Index(turn))
+							case "int":
+								value.Field(i).Index(turn).Field(lol).Field(d).SetInt(reflect.ValueOf(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Index(d).Interface()).Index(turn).Interface().(int64))
+							case "bool":
+								value.Field(i).Index(turn).Field(lol).Field(d).Set(reflect.ValueOf(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Index(d).Interface()).Index(turn))
+							case "float","float32","float64":
+								value.Field(i).Index(turn).Field(lol).Field(d).SetFloat(reflect.ValueOf(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Index(d).Interface()).Index(turn).Interface().(float64))
+							default:
+								value.Field(i).Index(turn).Field(lol).Field(d).Set(reflect.ValueOf(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Index(d).Interface()).Index(turn))
+
+							}
+							/*	if d==2{
+									value.Field(i).Index(turn).Field(lol).Field(d).SetInt(reflect.ValueOf(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Index(d).Interface()).Index(turn).Interface().(int64))
+								}else{
+									value.Field(i).Index(turn).Field(lol).Field(d).Set(reflect.ValueOf(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Index(d).Interface()).Index(turn))
+								}*/
+						}
+						//}
+						//fmt.Println(value.Field(i))
+						//fmt.Println(turn)
+						//fmt.Println(lol)
+
+						//  fmt.Println(gelen.Index(lol))
+
+						//fmt.Println(gelen.Index(lol).Interface())
+						//fmt.Println(reflect.ValueOf(gelen.Index(lol).Interface()).Len())
+						//fmt.Println(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(0).Interface()).Len())
+						//for columnCounter:=0;columnCounter<reflect.ValueOf(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn).Interface()).Index(0).Interface()).Len();columnCounter++ {
+
+						//fmt.Println(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn))
+						//fmt.Println(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn).Interface()).Index(0))
+						//fmt.Println(reflect.ValueOf(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn).Interface()).Len())
+						//fmt.Println(value.Field(i).Index(turn).Field(lol).Field(2))
+						//fmt.Println(value.Field(i).Index(turn).Field(lol).Type())
+						//fmt.Println(gelen.Index(lol).Index(turn))
+						//value.Field(i).Index(turn).Field(lol).Set(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn))
+						//value.Field(i).Index(turn).Field(lol).Set(gelen.Index(lol).Index(turn)) eskisi buydu
+					default:
+
+					}
+				}
+
+			}
+			//value.Field(i).Set(reflect.ValueOf(olusturulanConfigBu.readStructFromDB(Id,Mssql,reflect.New(underlyingValue).Elem().Interface(),true,recNumber+1)))
+		case "EM":
+			currentOrmConfigForEMTYPE := config.getAltTableByName(config.TableName+"_"+strconv.Itoa(i))
+			if isRecursiveCall{
+				var objects []interface{}
+
+					theObj := currentOrmConfigForEMTYPE.readStructFromDB(Id,Mssql,value.Field(i).Interface(),true,recNumber)
+					objects=append(objects,theObj)
+
+              allOfThem=append(allOfThem,objects)
+			}else{
+				value.Field(i).Set(reflect.ValueOf(currentOrmConfigForEMTYPE.readStructFromDB(Id,Mssql,value.Field(i).Interface(),false,0)))
+			}
+
+
+		}
+	}
+	if isRecursiveCall{
+		return allOfThem
+	}else{
+		return value.Interface()
+	}
+
+}
+
 func(config ormConfig) sqlAdd(mssql *sql.Tx,x interface{},isRecursiveCall bool,Id int){
 
 	var args []interface{}
@@ -454,12 +912,12 @@ func(config ormConfig) sqlAdd(mssql *sql.Tx,x interface{},isRecursiveCall bool,I
 
 		}
 	}
-	if isRecursiveCall{
+	//if isRecursiveCall{
 		args=append(args,sql.Named("ForeignID",Id))
 		mssql.Exec(config.generateSQLADD(true),args...)
-	}else{
-		mssql.Exec(config.generateSQLADD(false),args...)
-	}
+	//}else{
+	//	mssql.Exec(config.generateSQLADD(false),args...)
+	//}
 }
 
 func getNewId(mssql *MssqlDB,tablename string) int{
@@ -510,6 +968,7 @@ func generateTableForARRorSLI(compare map[string]string,tablename, datatype stri
 
 	return query,nil
 }
+
 
 func(config ormConfig) toSQL(mssql *MssqlDB) []string{
 
@@ -882,18 +1341,15 @@ func executeQueries(mssql *MssqlDB,queries []string){
 
 func fixTheQueries(queries []string,mainTable string) []string{
 	for i:=0;i< len(queries);i++{
-		if !strings.Contains(queries[i],"TABLE_NAME = N'"+mainTable+"')"){
+		//if !strings.Contains(queries[i],"TABLE_NAME = N'"+mainTable+"')"){
 			if !strings.Contains(queries[i],"ForeignID"){
 				queries[i]=strings.Replace(queries[i],"([Id] [int] IDENTITY(1,1) NOT NULL,","([Id] [int] IDENTITY(1,1) NOT NULL,ForeignID [int] NULL,",1)
 			}
-		}
+		//}
 	}
 	return  queries
 }
 
-func readStructFromDB(Id int,Mssql *MssqlDB,x interface{},config ormConfig) interface{}{
-
-}
 
 func(mssql *MssqlDB) GetCollection(x interface{},tableName string) ICollection{
 
@@ -932,6 +1388,11 @@ func(mssql *MssqlDB) GetCollection(x interface{},tableName string) ICollection{
 
 	}else{
 		getTheDBSchemaFromDB:=readConfigFromDatabase(mssql,tableName)
+		for i:=1;i<2;i++{
+			a:=getTheDBSchema.readStructFromDB(i,mssql,x,false,0)
+			fmt.Println(a)
+		}
+
       //şema değişikliği var mı kontrol et yoksa devam
 		if getTheDBSchema.isSame(getTheDBSchemaFromDB) {
 			//sema degisikligi yok
