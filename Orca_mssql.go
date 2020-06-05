@@ -5,6 +5,7 @@ import (
 	"fmt"
 	_ "github.com/denisenkom/go-mssqldb"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -77,6 +78,7 @@ type MssqlCollection struct {
 	DatabaseName string
 	Config ormConfig
 	CacheList map[int]interface{}
+	lock bool
 }
 
 type MssqlOptions struct {
@@ -283,6 +285,56 @@ func(config ormConfig) isSame(config2 ormConfig) bool{ //this function does not 
 	return true
 }
 
+func(config ormConfig) getAllTablenames() []string{
+	var alltablenames []string
+	allAlttables:=config.getAllAltTables()
+	allARRtables:=config.getARRtablesInOrder()
+	allSLItables:=config.getSLItablesInOrder()
+	allEMARRtables:=config.getEMARRtablesInOrder()
+	allEMSLItables:=config.getEMSLItablesInOrder()
+	for i:=0;i< len(allAlttables);i++{
+		alltablenames=append(alltablenames,allAlttables[i].TableName)
+	}
+
+	alltablenames=append(alltablenames,allARRtables...)
+	alltablenames=append(alltablenames,allSLItables...)
+	alltablenames=append(alltablenames,allEMARRtables...)
+	alltablenames=append(alltablenames,allEMSLItables...)
+
+
+	return unique(alltablenames)
+}
+
+func(config ormConfig) getAllTableNamesOptimized(Mssql *MssqlDB) []string{
+
+	var allTables []string
+	var result []string
+
+	rows,err:=Mssql.Database.Query("Select Parent,Child FROM OrcaRelations")
+	Check(err)
+	defer rows.Close()
+	for rows.Next(){
+		var str string
+		var str2 string
+		rows.Scan(&str,&str2)
+		allTables=append(allTables,str,str2)
+	}
+
+
+	for i:=0;i< len(allTables);i++{
+		if strings.Contains(allTables[i],"_"){
+			fixed:=strings.Split(allTables[i],"_")[0]
+			if fixed==config.TableName{
+				result=append(result,allTables[i])
+			}
+		}
+	}
+	result=append(result,config.TableName)
+
+
+	return unique(result)
+}
+
 func(config ormConfig) getAllAltTables() []ormConfig{
 	var allOrmConfigs []ormConfig
 	var waste []ormConfig
@@ -312,6 +364,9 @@ func(config ormConfig) getAllAltTables() []ormConfig{
 		val=false
 	}
 	return allOrmConfigs
+}
+func deleteQueryFromTableName(tablename string) string{
+	return "DELETE FROM "+tablename+" WHERE ForeignID=@ForeignID"
 }
 
 func(config ormConfig) getARRtablesInOrder() []string{
@@ -371,7 +426,7 @@ func(config ormConfig) generateSQLUPDATE(IndexOfnewValues []int) string{
 		for k:=0;k< len(IndexOfnewValues);k++{
 			if i==IndexOfnewValues[k]{
 				query+=stringList[i]+"@"+config.ColumnNames[i]
-				if i!= len(config.ColumnNames)-1{
+				if i!= len(IndexOfnewValues)-1{
 					query+=", "
 				}
 			}
@@ -694,14 +749,12 @@ func(config ormConfig) readStructFromDB(Id int,Mssql *MssqlDB,x interface{},isRe
 			underlyingValue:=value.Field(i).Type().Elem()
 			olusturulanConfigBu := createOrmConfig(reflect.New(underlyingValue).Elem().Interface(),config.TableName+"_"+strconv.Itoa(i))
 			gelen:=reflect.ValueOf(olusturulanConfigBu.readStructFromDB(Id,Mssql,reflect.New(underlyingValue).Elem().Interface(),true, value.Field(i).Len())) //it returns a slice, each element for a column
-            fmt.Println(gelen)
+
 			for turn:=0;turn<value.Field(i).Len();turn++{
 
 				for lol:=0;lol<gelen.Len();lol++{
 					switch olusturulanConfigBu.TypeAnalysis[lol] {
 					case "NORMAL":
-						fmt.Println(gelen.Index(lol))
-						fmt.Println(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn))
 						value.Field(i).Index(turn).Field(lol).Set(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn))
 						//value.Field(i).Index(turn).Field(lol).Set(gelen.Index(lol).Index(turn))
 					case "ARR":
@@ -775,7 +828,7 @@ func(config ormConfig) readStructFromDB(Id int,Mssql *MssqlDB,x interface{},isRe
 			underlyingValue:=value.Field(i).Type().Elem()
 			olusturulanConfigBu := createOrmConfig(reflect.New(underlyingValue).Elem().Interface(),config.TableName+"_"+strconv.Itoa(i))
 			countOfTuples := getCountOfTuples(Id,Mssql,olusturulanConfigBu.TableName)
-			fmt.Println(countOfTuples)
+
 			gelen:=reflect.ValueOf(olusturulanConfigBu.readStructFromDB(Id,Mssql,reflect.New(underlyingValue).Elem().Interface(),true, countOfTuples)) //it returns a slice, each element for a column
 			//fmt.Println(gelen)
             value.Field(i).Set(reflect.MakeSlice(value.Field(i).Type(),countOfTuples,countOfTuples))
@@ -784,8 +837,7 @@ func(config ormConfig) readStructFromDB(Id int,Mssql *MssqlDB,x interface{},isRe
 				for lol:=0;lol<gelen.Len();lol++{
 					switch olusturulanConfigBu.TypeAnalysis[lol] {
 					case "NORMAL":
-						fmt.Println(gelen.Index(lol))
-						fmt.Println(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn))
+
 						value.Field(i).Index(turn).Field(lol).Set(reflect.ValueOf(gelen.Index(lol).Interface()).Index(turn))
 						//value.Field(i).Index(turn).Field(lol).Set(gelen.Index(lol).Index(turn))
 					case "ARR":
@@ -879,6 +931,9 @@ func(config ormConfig) readStructFromDB(Id int,Mssql *MssqlDB,x interface{},isRe
 
 }
 
+func(config ormConfig) sqlUpdate(mssql *sql.Tx,x interface{},isRecursiveCall bool,Id int,newIndexes map[int]bool){
+	//will be implemented soon
+}
 func(config ormConfig) sqlAdd(mssql *sql.Tx,x interface{},isRecursiveCall bool,Id int){
 
 	var args []interface{}
@@ -896,7 +951,7 @@ func(config ormConfig) sqlAdd(mssql *sql.Tx,x interface{},isRecursiveCall bool,I
 		case "EMARR","EMSLICE":
 			args=append(args,sql.Named(config.ColumnNames[i],Id))
 		/*	underlyingValue :=value.Field(i).Type().Elem()
-			ormConfigFortheEMTYPE:=createOrmConfig(reflect.New(underlyingValue).Elem().Interface(),config.TableName+"_"+strconv.Itoa(i))//alttaki işi fora sokup yapacaksın işte
+			ormConfigFortheEMTYPE:=createOrmConfigforMySQL(reflect.New(underlyingValue).Elem().Interface(),config.TableName+"_"+strconv.Itoa(i))//alttaki işi fora sokup yapacaksın işte
 			ormConfigFortheEMTYPE.sqlAdd(mssql,reflect.New(underlyingValue).Elem().Interface(),true)*/
 		 structOfArrayorSlice:=value.Field(i)
 		 for s:=0;s<structOfArrayorSlice.Len();s++{
@@ -919,6 +974,8 @@ func(config ormConfig) sqlAdd(mssql *sql.Tx,x interface{},isRecursiveCall bool,I
 	//	mssql.Exec(config.generateSQLADD(false),args...)
 	//}
 }
+
+
 
 func getNewId(mssql *MssqlDB,tablename string) int{
 	currentKey:=0
@@ -1195,23 +1252,56 @@ func createConfigAndRelationsReferancesForDatabase(mssql *MssqlDB,config ormConf
 	allConfigs := config.getAllAltTables()
 	    for _,k:=range allConfigs{
 			for i:=0;i<len(k.ColumnNames);i++{
-				_,err:=mssql.Database.Exec("Insert into OrcaConfig (TableName,ColumnName,ColumnType,ColumnType2,ColumnOrder) VALUES (@TableName,@ColumnName,@ColumnType,@ColumnType2,@ColumnOrder)",sql.Named("TableName",k.TableName,),sql.Named("ColumnName",k.ColumnNames[i]),sql.Named("ColumnType",k.TypeAnalysis[i]),sql.Named("ColumnType2",k.CinsAnalysis[i]),sql.Named("ColumnOrder",k.ColumnOrder[k.ColumnNames[i]]))
-				Check(err)
+				var look int = 0
+				row:=mssql.Database.QueryRow("Select Count(*) FROM OrcaConfig WHERE TableName=@TableName AND ColumnName=@ColumnName AND ColumnType=@ColumnType AND ColumnType2=@ColumnType2 AND ColumnOrder=@ColumnOrder",sql.Named("TableName",k.TableName,),sql.Named("ColumnName",k.ColumnNames[i]),sql.Named("ColumnType",k.TypeAnalysis[i]),sql.Named("ColumnType2",k.CinsAnalysis[i]),sql.Named("ColumnOrder",k.ColumnOrder[k.ColumnNames[i]]))
+				err:=row.Scan(&look)
+				if err!=nil{
+					look=0
+				}
+				if look==0{
+					_,err=mssql.Database.Exec("Insert into OrcaConfig (TableName,ColumnName,ColumnType,ColumnType2,ColumnOrder) VALUES (@TableName,@ColumnName,@ColumnType,@ColumnType2,@ColumnOrder)",sql.Named("TableName",k.TableName,),sql.Named("ColumnName",k.ColumnNames[i]),sql.Named("ColumnType",k.TypeAnalysis[i]),sql.Named("ColumnType2",k.CinsAnalysis[i]),sql.Named("ColumnOrder",k.ColumnOrder[k.ColumnNames[i]]))
+					Check(err)
+				}
 			}
 
 			for _,s:=range k.ContainsEMTablesName{
-				_,err:=mssql.Database.Exec("Insert into OrcaRelations (Parent,Child,Slice,Array,Embedded) VALUES (@Parent,@Child,@Slice,@Array,@Embedded)",sql.Named("Parent",k.TableName),sql.Named("Child",s),sql.Named("Slice",false),sql.Named("Array",false),sql.Named("Embedded",true))
-				Check(err)
+				var look int =0
+				row:=mssql.Database.QueryRow("Select Count(*) FROM OrcaRelations WHERE Parent=@Parent AND Child=@Child AND Slice=@Slice AND Array=@Array AND Embedded=@Embedded",sql.Named("Parent",k.TableName),sql.Named("Child",s),sql.Named("Slice",false),sql.Named("Array",false),sql.Named("Embedded",true))
+				err:=row.Scan(&look)
+				if err!=nil{
+					look=0
+				}
+				if look==0{
+					_,err=mssql.Database.Exec("Insert into OrcaRelations (Parent,Child,Slice,Array,Embedded) VALUES (@Parent,@Child,@Slice,@Array,@Embedded)",sql.Named("Parent",k.TableName),sql.Named("Child",s),sql.Named("Slice",false),sql.Named("Array",false),sql.Named("Embedded",true))
+					Check(err)
+				}
 			}
 
 			for _,s:=range k.ContainsEMARRTablesName{
-				_,err:=mssql.Database.Exec("Insert into OrcaRelations (Parent,Child,Slice,Array,Embedded) VALUES (@Parent,@Child,@Slice,@Array,@Embedded)",sql.Named("Parent",k.TableName),sql.Named("Child",s),sql.Named("Slice",false),sql.Named("Array",true),sql.Named("Embedded",false))
-				Check(err)
+				var look int=0
+				row:=mssql.Database.QueryRow("Select Count(*) FROM OrcaRelations WHERE Parent=@Parent AND Child=@Child AND Slice=@Slice AND Array=@Array AND Embedded=@Embedded")
+				err:=row.Scan(&look)
+				if err!=nil{
+					look=0
+				}
+				if look==0{
+					_,err=mssql.Database.Exec("Insert into OrcaRelations (Parent,Child,Slice,Array,Embedded) VALUES (@Parent,@Child,@Slice,@Array,@Embedded)",sql.Named("Parent",k.TableName),sql.Named("Child",s),sql.Named("Slice",false),sql.Named("Array",true),sql.Named("Embedded",false))
+					Check(err)
+				}
 			}
 
 			for _,s:=range k.ContainsEMSLICETablesName{
-				_,err:=mssql.Database.Exec("Insert into OrcaRelations (Parent,Child,Slice,Array,Embedded) VALUES (@Parent,@Child,@Slice,@Array,@Embedded)",sql.Named("Parent",k.TableName),sql.Named("Child",s),sql.Named("Slice",true),sql.Named("Array",false),sql.Named("Embedded",false))
-				Check(err)
+				var look int=0
+				row:=mssql.Database.QueryRow("Select Count(*) FROM OrcaRelations WHERE Parent=@Parent AND Child=@Child AND Slice=@Slice AND Array=@Array AND Embedded=@Embedded",sql.Named("Parent",k.TableName),sql.Named("Child",s),sql.Named("Slice",true),sql.Named("Array",false),sql.Named("Embedded",false))
+				err:=row.Scan(&look)
+				if err!=nil{
+					look=0
+				}
+				if look==0{
+					_,err=mssql.Database.Exec("Insert into OrcaRelations (Parent,Child,Slice,Array,Embedded) VALUES (@Parent,@Child,@Slice,@Array,@Embedded)",sql.Named("Parent",k.TableName),sql.Named("Child",s),sql.Named("Slice",true),sql.Named("Array",false),sql.Named("Embedded",false))
+					Check(err)
+				}
+
 			}
 
 		}
@@ -1350,6 +1440,32 @@ func fixTheQueries(queries []string,mainTable string) []string{
 	return  queries
 }
 
+func getMinForeignID(Mssql *MssqlDB,tablename string ) int {
+	var result int
+	row:=Mssql.Database.QueryRow("Select Min(ForeignID) FROM "+tablename)
+
+	err:=row.Scan(&result)
+	Check(err)
+	if err!=nil{
+		result=0
+	}
+
+	return result
+}
+
+func getMaxForeignID(Mssql *MssqlDB,tablename string)int{
+	var result int
+	row:=Mssql.Database.QueryRow("Select Max(ForeignID) FROM "+tablename)
+
+	err:=row.Scan(&result)
+	Check(err)
+	if err!=nil{
+		result=0
+	}
+
+	return result
+}
+
 
 func(mssql *MssqlDB) GetCollection(x interface{},tableName string) ICollection{
 
@@ -1368,29 +1484,45 @@ func(mssql *MssqlDB) GetCollection(x interface{},tableName string) ICollection{
 
 	getTheDBSchema:=createOrmConfig(x,tableName)
 
-	allSQLQueries := fixTheQueries(getTheDBSchema.toSQL(mssql),tableName)//tamam artık ürettiğin sqlleri execute et
+
 	update:=getTheDBSchema.generateSQLUPDATE([]int{0,1,2,3})
-	deletee:=getTheDBSchema.generateSQLDELETE()
-	clear:=getTheDBSchema.generateSQLCLEAR()
 
-    executeQueries(mssql,allSQLQueries)
+
+	//deletee:=getTheDBSchema.generateSQLDELETE()
+	//clear:=getTheDBSchema.generateSQLCLEAR()
+
+
     _=update
-    _=deletee
-    _=clear
+
+    //_=deletee
+    //_=clear
+	allSQLQueries := fixTheQueries(getTheDBSchema.toSQL(mssql),tableName)//tamam artık ürettiğin sqlleri execute et
 
 
+	var list []interface{}
+	var listID []int
+	var cacheList map[int]interface{} = make(map[int]interface{})
 
 
 	if count==0{
+
+	 executeQueries(mssql,allSQLQueries)
      createConfigAndRelationsReferancesForDatabase(mssql,getTheDBSchema)
      //tabloları create et
 
 
 	}else{
+
 		getTheDBSchemaFromDB:=readConfigFromDatabase(mssql,tableName)
-		for i:=1;i<2;i++{
+		theMin:=getMinForeignID(mssql,getTheDBSchema.TableName)
+		TheMax:=getMaxForeignID(mssql,getTheDBSchema.TableName)
+		if TheMax-theMin!=0{
+		  for i:=theMin;i<=TheMax;i++{
 			a:=getTheDBSchema.readStructFromDB(i,mssql,x,false,0)
-			fmt.Println(a)
+			list=append(list,a)
+			listID=append(listID,i)
+			cacheList[i]=a
+		  }
 		}
 
       //şema değişikliği var mı kontrol et yoksa devam
@@ -1402,11 +1534,9 @@ func(mssql *MssqlDB) GetCollection(x interface{},tableName string) ICollection{
 		}
 	}
 
-	var list []interface{}
-	var listID []int
-	var cacheList map[int]interface{} = make(map[int]interface{})
 
-	return MssqlCollection{
+
+	return &MssqlCollection{
 		Mssql:            mssql,
 		ListId:           listID,
 		List:             list,
@@ -1419,41 +1549,365 @@ func(mssql *MssqlDB) GetCollection(x interface{},tableName string) ICollection{
 	}
 }
 
-func (m MssqlCollection) Add(x interface{}) {
+
+func (m *MssqlCollection) Add(x interface{}) {
+
+	if m.lock==false {
+
+		if len(m.LocalH) > 0 {
+
+			//local hook
+			var beforeAddLocalHooks []LocalHook
+			for i := 0; i < len(m.LocalH); i++ {
+				if _, n := m.LocalH[i].getSign(); n == BeforeAdd {
+					beforeAddLocalHooks = append(beforeAddLocalHooks, m.LocalH[i])
+				}
+			}
+
+			sort.Sort(byPriority(beforeAddLocalHooks))
+
+			for i := 0; i < len(beforeAddLocalHooks); i++ {
+				funk := beforeAddLocalHooks[i].getHookFunc()
+				x = funk(x)
+			}
+			//local hook
+
+		}
+	}
+
+	var cacheInterface interface{}
+
 	Id:=getNewId(m.Mssql,m.Config.TableName)
 	tx,err:=m.Mssql.Database.Begin()
 	Check(err)
 	m.Config.sqlAdd(tx,x,false,Id)
 	err=tx.Commit()
+	if err==nil{
+		m.ListId=append(m.ListId,Id)
+		m.List=append(m.List,x)
+		m.CacheList[Id]=cacheInterface
+	}
 	Check(err)
+
+	if m.lock==false {
+		if len(m.LocalH) > 0 {
+			//local hook
+			var afterAddLocalHooks []LocalHook
+			for i := 0; i < len(m.LocalH); i++ {
+				if _, n := m.LocalH[i].getSign(); n == AfterAdd {
+					afterAddLocalHooks = append(afterAddLocalHooks, m.LocalH[i])
+				}
+			}
+
+			sort.Sort(byPriority(afterAddLocalHooks))
+
+			for i := 0; i < len(afterAddLocalHooks); i++ {
+				funk := afterAddLocalHooks[i].getHookFunc()
+				funk(x)
+			}
+			//local hook
+
+		}
+	}
 }
 
-func (m MssqlCollection) AddRange(interface{}) {
+func (m *MssqlCollection) AddRange(x interface{}) {
+
+	if m.lock==false {
+
+		if len(m.LocalH) > 0 {
+
+			//local hook
+			var beforeAddRangeLocalHooks []LocalHook
+			for i := 0; i < len(m.LocalH); i++ {
+				if _, n := m.LocalH[i].getSign(); n == BeforeAddRange {
+					beforeAddRangeLocalHooks = append(beforeAddRangeLocalHooks, m.LocalH[i])
+				}
+			}
+
+			sort.Sort(byPriority(beforeAddRangeLocalHooks))
+
+			for i := 0; i < len(beforeAddRangeLocalHooks); i++ {
+				funk := beforeAddRangeLocalHooks[i].getHookFunc()
+				x = funk(x)
+			}
+			//local hook
+
+		}
+	}
+
+
+	var cacheID []int
+	var cacheInterface []interface{}
+	Id:=getNewId(m.Mssql,m.Config.TableName)
+	tx,err:=m.Mssql.Database.Begin()
+	Check(err)
+	value:=reflect.ValueOf(x)
+	for i:=0;i<value.Len();i++{
+		m.Config.sqlAdd(tx,value.Index(i).Interface(),false,Id)
+		cacheID=append(cacheID,i)
+		cacheInterface=append(cacheInterface,value.Index(i).Interface())
+		Id++
+	}
+	err=tx.Commit()
+	if err==nil&& len(cacheID)!=0{
+		for i:=0;i< len(cacheID);i++{
+			m.ListId=append(m.ListId,cacheID[i])
+			m.List=append(m.List,cacheInterface[i])
+			m.CacheList[cacheID[i]]=cacheInterface[i]
+		}
+	}
+	Check(err)
+
+	if m.lock==false {
+
+		if len(m.LocalH) > 0 {
+
+			//local hook
+			var afterAddRangeLocalHooks []LocalHook
+			for i := 0; i < len(m.LocalH); i++ {
+				if _, n := m.LocalH[i].getSign(); n == BeforeAddRange {
+					afterAddRangeLocalHooks = append(afterAddRangeLocalHooks, m.LocalH[i])
+				}
+			}
+
+			sort.Sort(byPriority(afterAddRangeLocalHooks))
+
+			for i := 0; i < len(afterAddRangeLocalHooks); i++ {
+				funk := afterAddRangeLocalHooks[i].getHookFunc()
+				x = funk(x)
+			}
+			//local hook
+
+		}
+	}
+
+}
+
+
+func (m *MssqlCollection) Update(old interface{}, new interface{}) {
+
+	m.lock=true
+	if len(m.LocalH)>0 {
+		//local hook
+		var beforeUpdateLocalHooks []LocalHook
+		for i := 0; i < len(m.LocalH); i++ {
+			if _, n := m.LocalH[i].getSign(); n == BeforeUpdate {
+				beforeUpdateLocalHooks = append(beforeUpdateLocalHooks, m.LocalH[i])
+			}
+		}
+
+		sort.Sort(byPriority(beforeUpdateLocalHooks))
+
+		for i := 0; i < len(beforeUpdateLocalHooks); i++ {
+			funk := beforeUpdateLocalHooks[i].getHookFunc()
+			old = funk(old)
+		}
+		//local hook
+
+	}
+
+	Id:=detectTheId(m,old)
+	//tables:=m.Config.getAllTablenames()
+	tables:=m.Config.getAllTableNamesOptimized(m.Mssql)
+	var queries []string
+	for i:=0; i<len(tables);i++{
+		queries=append(queries,deleteQueryFromTableName(tables[i]))
+	}
+
+	tx,err:=m.Mssql.Database.Begin()
+	Check(err)
+	for i:=0;i< len(queries);i++{
+		_,err=tx.Exec(queries[i],sql.Named("ForeignID",Id))
+	}
+
+	m.Config.sqlAdd(tx,new,false,Id)
+
+	err=tx.Commit()
+	if err==nil{
+		for i:=0;i< len(m.ListId);i++{
+			if m.ListId[i]==Id{
+				m.ListId[i]=m.ListId[len(m.ListId)-1]
+				m.ListId=m.ListId[:len(m.ListId)-1]
+				//
+				m.List[i]=m.List[len(m.List)-1]
+				m.List=m.List[:len(m.List)-1]
+				//
+			}
+		}
+
+
+		m.ListId=append(m.ListId,Id)
+		m.List=append(m.List,new)
+		m.CacheList[Id]=new
+	}
+	Check(err)
+
+
+	if len(m.LocalH)>0 {
+		//local hook
+		var afterUpdateLocalHooks []LocalHook
+		for i := 0; i < len(m.LocalH); i++ {
+			if _, n := m.LocalH[i].getSign(); n == AfterUpdate {
+				afterUpdateLocalHooks = append(afterUpdateLocalHooks, m.LocalH[i])
+			}
+		}
+
+		sort.Sort(byPriority(afterUpdateLocalHooks))
+
+		for i := 0; i < len(afterUpdateLocalHooks); i++ {
+			funk := afterUpdateLocalHooks[i].getHookFunc()
+			funk(new)
+		}
+		//local hook
+
+	}
+	m.lock=false
+
+
+
+
+	/*var newIndexes[]int        this will be implemented soon
+	oldValue:=reflect.ValueOf(old)
+	newValue:=reflect.ValueOf(new)
+	oldFieldNum:=oldValue.NumField()
+	for i:=0;i<oldFieldNum;i++{
+		fmt.Println(oldValue.Field(i))
+		fmt.Println(newValue.Field(i))
+		if !reflect.DeepEqual(oldValue.Field(i).Interface(),newValue.Field(i).Interface()){
+			newIndexes=append(newIndexes,i)
+		}
+	}
+	tx,err:=m.Mssql.Database.Begin()
+	Check(err)
+	m.Config.sqlUpdate(tx,new,false,1,newIndexes)
+	err=tx.Commit()
+	Check(err)*/
+
+}
+
+func detectTheId(m *MssqlCollection,value interface{}) int{
+	for i:=0;i< len(m.List);i++{
+		if reflect.DeepEqual(m.List[i],value){
+			return m.ListId[i]
+		}
+	}
+	return 0
+}
+
+func (m *MssqlCollection) Delete(x interface{}) {
+
+	if m.lock==false {
+		if len(m.LocalH) > 0 {
+			//local hook
+			var beforeDeleteLocalHooks []LocalHook
+			for i := 0; i < len(m.LocalH); i++ {
+				if _, n := m.LocalH[i].getSign(); n == BeforeDelete {
+					beforeDeleteLocalHooks = append(beforeDeleteLocalHooks, m.LocalH[i])
+				}
+			}
+
+			sort.Sort(byPriority(beforeDeleteLocalHooks))
+
+			for i := 0; i < len(beforeDeleteLocalHooks); i++ {
+				funk := beforeDeleteLocalHooks[i].getHookFunc()
+				x = funk(x)
+			}
+			//local hook
+
+		}
+	}
+
+	  Id:=detectTheId(m,x)
+      //tables:=m.Config.getAllTablenames()
+      tables:=m.Config.getAllTableNamesOptimized(m.Mssql)
+      var queries []string
+      for i:=0; i<len(tables);i++{
+      	queries=append(queries,deleteQueryFromTableName(tables[i]))
+	  }
+
+	  tx,err:=m.Mssql.Database.Begin()
+	  Check(err)
+	  for i:=0;i< len(queries);i++{
+	  	 _,err=tx.Exec(queries[i],sql.Named("ForeignID",Id))
+	  }
+	  err=tx.Commit()
+	  if err==nil{
+	  	for i:=0;i< len(m.ListId);i++{
+	  		if i==Id{
+	  			m.ListId[i]=m.ListId[len(m.ListId)-1]
+	  			m.ListId=m.ListId[:len(m.ListId)-1]
+	  			//
+	  			m.List[i]=m.List[len(m.List)-1]
+	  			m.List=m.List[:len(m.List)-1]
+	  			//
+			}
+		}
+		delete(m.CacheList,Id)
+	  }
+
+
+	if m.lock==false {
+		if len(m.LocalH) > 0 {
+
+			//local hook
+			var afterDeleteLocalHooks []LocalHook
+			for i := 0; i < len(m.LocalH); i++ {
+				if _, n := m.LocalH[i].getSign(); n == AfterDelete {
+					afterDeleteLocalHooks = append(afterDeleteLocalHooks, m.LocalH[i])
+				}
+			}
+
+			sort.Sort(byPriority(afterDeleteLocalHooks))
+
+			for i := 0; i < len(afterDeleteLocalHooks); i++ {
+				funk := afterDeleteLocalHooks[i].getHookFunc()
+				funk(x)
+			}
+			//local hook
+
+		}
+	}
+
+}
+
+func (m *MssqlCollection) Clear() {
+
+	tx,err:=m.Mssql.Database.Begin()
+	Check(err)
+	tables:=m.Config.getAllTableNamesOptimized(m.Mssql)
+	for i:=0;i< len(tables);i++{
+		_,err:=tx.Exec("TRUNCATE TABLE "+tables[i])
+		Check(err)
+	}
+	err=tx.Commit()
+	if err==nil{
+		m.List=m.List[:0]
+		m.ListId=m.ListId[:0]
+		for k,_:= range m.CacheList{
+			delete(m.CacheList,k)
+		}
+	}
+	Check(err)
+
+}
+
+func (m *MssqlCollection) Foreach(interface{}) {
 	panic("implement me")
 }
 
-func (m MssqlCollection) Update(interface{}, interface{}) {
+func (m *MssqlCollection) GetLogs() {
 	panic("implement me")
 }
 
-func (m MssqlCollection) Delete(interface{}) {
-	panic("implement me")
-}
+func (m *MssqlCollection) ToSlice() []interface{} {
+	slice:=make([]interface{},0,1)
 
-func (m MssqlCollection) Clear() {
-	panic("implement me")
-}
+	for _,v:=range m.List{
+		slice=append(slice,v)
+	}
 
-func (m MssqlCollection) Foreach(interface{}) {
-	panic("implement me")
-}
-
-func (m MssqlCollection) GetLogs() {
-	panic("implement me")
-}
-
-func (m MssqlCollection) ToSlice() []interface{} {
-	panic("implement me")
+	return slice
 }
 
 
