@@ -57,7 +57,7 @@ func Use(yourDb string,options IOptions) (IDatabase,error){
 	switch yourDb {
 
 	case MySQL:
-		return nil,nil
+		return getMysqlDB(options.Options()[0],options.Options()[1],options.Options()[2],options.Options()[3]),nil
 	case MSSQL:
 		return getMssqlDB(options.Options()[2],options.Options()[0],options.Options()[1]),nil
 	case SQLite:

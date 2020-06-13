@@ -1516,7 +1516,7 @@ func(mssql *MssqlDB) GetCollection(x interface{},tableName string) ICollection{
 		getTheDBSchemaFromDB:=readConfigFromDatabase(mssql,tableName)
 		theMin:=getMinForeignID(mssql,getTheDBSchema.TableName)
 		TheMax:=getMaxForeignID(mssql,getTheDBSchema.TableName)
-		if TheMax-theMin!=0{
+		if TheMax-theMin>=0{
 		  for i:=theMin;i<=TheMax;i++{
 			a:=getTheDBSchema.readStructFromDB(i,mssql,x,false,0)
 			list=append(list,a)
