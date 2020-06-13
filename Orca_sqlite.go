@@ -354,7 +354,8 @@ func getTupleToStruct2(Data *Database,x interface{},Id,tableName string) interfa
 }
 
 
-func getTupleToStruct(Data *Database,x interface{},Id,tableName string) reflect.Value {//x must be a struct
+func getTupleToStructForSlices(Data *Database,x interface{},Id,tableName string) reflect.Value{
+
 
 
 	//newStruct:=reflect.ValueOf(newStructLike(x))
@@ -372,7 +373,8 @@ func getTupleToStruct(Data *Database,x interface{},Id,tableName string) reflect.
 		cache[i]=&cachePS[i]
 	}
 
-	row:=Data.db.QueryRow("SELECT * FROM "+tableName+" WHERE Id=="+Id)
+	row:=Data.db.QueryRow("SELECT * FROM "+tableName+" WHERE rowid=="+Id)
+
 
 	err:=row.Scan(cache...)
 
@@ -443,17 +445,40 @@ func getTupleToStruct(Data *Database,x interface{},Id,tableName string) reflect.
 
 			default://default catches array of struct
 
-				/*TheSlice:=make([]interface{},0,1)
+				//TheSlice:=make([]interface{},0,1)
 
 				cacheStruct:=newStruct.Field(i)
 
+
+
+				elemType := cacheStruct.Type().Elem()
+
+				elemSlice := reflect.MakeSlice(reflect.SliceOf(elemType), 0,0)
+
 				min:=getMinId(Data,tableName+"_"+s[2])
 				max:=getMAXId(Data,tableName+"_"+s[2])
-				for i:=min;i<=max;i++{
-					strc:=getTupleToStruct(Data,cacheStruct.Interface(),strconv.Itoa(i),tableName+"_"+s[2])
-					TheSlice=append(TheSlice,strc)
+				_=max
+				_=min
 
-				}*/
+
+
+
+
+
+						fmt.Println("Id:" + strconv.Itoa(max))
+
+						intPtr := reflect.New(cacheStruct.Type().Elem())
+						b := intPtr.Elem().Interface()
+
+						strc := getTupleToStruct(Data, b, Id, tableName+"_"+s[2])
+
+						elemSlice = reflect.Append(elemSlice, strc)
+						//TheSlice=append(TheSlice,strc)
+
+
+
+
+				newStruct.Field(i).Set(elemSlice)
 
 
 
@@ -501,6 +526,188 @@ func getTupleToStruct(Data *Database,x interface{},Id,tableName string) reflect.
 
 	}
 
+
+
+	return newStruct
+}
+
+
+
+
+
+func getTupleToStruct(Data *Database,x interface{},Id,tableName string) reflect.Value {//x must be a struct
+
+
+
+	//newStruct:=reflect.ValueOf(newStructLike(x))
+	//newStruct:=reflect.ValueOf(x)
+	ptr:=reflect.New(reflect.TypeOf(x))
+	newStruct:=ptr.Elem()
+
+	ColNames:=getColumnNames(Data, tableName)
+	ColNums:= len(ColNames)
+
+
+	cachePS:=make([]interface{},ColNums,ColNums)
+	cache :=make([]interface{},ColNums,ColNums)
+	for i,_:=range cachePS{
+		cache[i]=&cachePS[i]
+	}
+
+	row:=Data.db.QueryRow("SELECT * FROM "+tableName+" WHERE Id=="+Id)
+
+
+	err:=row.Scan(cache...)
+
+	Check(err)
+
+	for i,v:=range ColNames[1:]{//[1:] jump over Id column!
+
+		if strings.Contains(v,"EMARR_"){//embedded array or slice!
+
+			s:=strings.Split(v,"_")
+
+			switch s[1] {
+			case "int"://caches array of int
+				TheSlice:=make([]int,0,1)
+				var cacheId int
+				var cacheInt int
+				rows,err:=Data.db.Query("SELECT * FROM "+tableName+"_"+s[2]+" WHERE Id=="+Id)
+				Check(err)
+				for rows.Next(){
+					err=rows.Scan(&cacheId,&cacheInt)
+					Check(err)
+					TheSlice=append(TheSlice,cacheInt)
+				}
+
+				err=rows.Close()
+				Check(err)
+
+
+				newStruct.Field(i).Set(reflect.ValueOf(TheSlice))
+
+
+
+			case "string": //caches array of string
+
+				TheSlice:=make([]string,0,1)
+				var cacheId int
+				var cacheString string
+				rows,err:=Data.db.Query("SELECT * FROM "+tableName+"_"+s[2]+" WHERE Id=="+Id)
+				Check(err)
+				for rows.Next(){
+					err=rows.Scan(&cacheId,&cacheString)
+					Check(err)
+					TheSlice=append(TheSlice,cacheString)
+				}
+
+				err=rows.Close()
+				Check(err)
+
+				newStruct.Field(i).Set(reflect.ValueOf(TheSlice))
+
+
+			case "float": //caches array of float
+				TheSlice:=make([]float32,0,1)
+				var cacheId int
+				var cachefloat float32
+				rows,err:=Data.db.Query("SELECT * FROM "+tableName+"_"+s[2]+" WHERE Id=="+Id)
+				Check(err)
+				for rows.Next(){
+					err=rows.Scan(&cacheId,&cachefloat)
+					Check(err)
+					TheSlice=append(TheSlice,cachefloat)
+				}
+
+				err=rows.Close()
+				Check(err)
+
+				newStruct.Field(i).Set(reflect.ValueOf(TheSlice))
+
+			default://default catches array of struct
+
+				//TheSlice:=make([]interface{},0,1)
+
+				cacheStruct:=newStruct.Field(i)
+
+
+
+				elemType := cacheStruct.Type().Elem()
+
+				elemSlice := reflect.MakeSlice(reflect.SliceOf(elemType), 0,0)
+
+				min:=getMinId(Data,tableName+"_"+s[2])
+				max:=getMAXId(Data,tableName+"_"+s[2])
+				_=max
+				for i:=min;i<=max;i++{
+
+					tupleCount:=getTupleCountWithId(Data,tableName+"_"+s[2],i)
+
+					for k:=1;k<=tupleCount;k++ {
+
+						fmt.Println("Id:" + strconv.Itoa(max))
+
+						intPtr := reflect.New(cacheStruct.Type().Elem())
+						b := intPtr.Elem().Interface()
+
+						strc := getTupleToStructForSlices(Data, b, strconv.Itoa(k), tableName+"_"+s[2])
+
+						elemSlice = reflect.Append(elemSlice, strc)
+						//TheSlice=append(TheSlice,strc)
+					}
+
+				}
+
+				newStruct.Field(i).Set(elemSlice)
+
+
+
+			}
+
+
+		}else if strings.Contains(v,"EM_"){//embedded struct!
+
+			s:=strings.Split(v,"_")
+			EMId:=int(cachePS[i+1].(int64))
+			sEMId:=strconv.Itoa(EMId)
+			TheOtherX:=newStruct.Field(i).Interface()
+			newStruct.Field(i).Set(getTupleToStruct(Data,TheOtherX,sEMId,tableName+"_"+s[1]))
+
+
+
+		}else if v=="Id"{//primary key or foreign key
+
+			//reflect.ValueOf(newStruct).Field(i).Set(reflect.ValueOf(int(slice[i].(int64))))
+
+
+		}else{//normal
+
+			s:=strings.Split(v,"_")
+			switch s[1] {
+			case "int":
+				val:=reflect.ValueOf(int(cachePS[i+1].(int64)))
+				_=val
+				newStruct.Field(i).Set(val)
+			case "string":
+				val:=reflect.ValueOf(cachePS[i+1].(string))
+				newStruct.Field(i).Set(val)
+
+			case "float":
+				val:=reflect.ValueOf(float32(cachePS[i+1].(float64)))
+				newStruct.Field(i).Set(val)
+
+			default:
+
+
+			}
+
+
+		}
+
+	}
+
+
+
 	return newStruct
 
 
@@ -520,6 +727,14 @@ func getTupleCount(Data *Database,tableName string) int{
 
 	return result
 
+}
+
+func getTupleCountWithId(Data *Database,tableName string,Id int)int{
+	var result int
+	q1:="Select Count(*) FROM "+tableName+" WHERE Id=="+strconv.Itoa(Id)
+	row:=Data.db.QueryRow(q1)
+	row.Scan(&result)
+	return result
 }
 
 func getColumnNames(Data *Database,tableName string) []string{
@@ -1117,24 +1332,97 @@ func getAllTableNames(t Table) []string{
 	return queries
 }
 
+func getMaxColumnValue(Data *Database,columnName,tableName string) int{
+	var result int
+	row:=Data.db.QueryRow("SELECT MAX("+columnName+") FROM "+tableName)
+	err:=row.Scan(&result)
+	if err!=nil{
+		return 0
+	}
+	Check(err)
+	return result
+}
+
 func setTuples(slice interface{},tableName string,Id int,collection Collection){
 
 
 	sl:=reflect.ValueOf(slice)
+
+	fmt.Println(slice)
+	fmt.Println(sl)
+	fmt.Println(getInsertQuery(tableName, getColumnNames(collection.data, tableName)))
 	Tx,err:=collection.data.db.Begin()
 
 	Check(err)
+	var theeId = 0
+	Idchecked:=false
 	for i:=0;i<sl.Len();i++ {
 
 		stmt, err := Tx.Prepare(getInsertQuery(tableName, getColumnNames(collection.data, tableName)))
+
 		Check(err)
-		res, err := stmt.Exec(Id,sl.Index(i).Interface())
+        bak:=getColumnNames(collection.data, tableName)
+        slc:=make([]interface{},0)
+        slc=append(slc,Id)
+        for k:=0;k< len(bak)-1;k++{
+
+
+
+        	if sl.Index(i).Kind()==reflect.Array||sl.Index(i).Kind()==reflect.Slice{
+				if !Idchecked{
+					theId:=getMaxColumnValue(collection.data,bak[k+1],tableName)+1
+					theeId=theId
+					Idchecked=true
+				}
+				s:=strings.Split(bak[k+1],"_")
+
+				setTuple2(sl.Index(i).Interface(),tableName+"_"+s[len(s)-1],theeId,collection,[]string{"Id",tableName+"_"+s[len(s)-1]})
+				return
+			}
+
+        	switch sl.Index(i).Field(k).Kind(){
+
+			case reflect.Slice,reflect.Array,reflect.Struct://burada int,float,string vs ayrı ayrı handle etmek gerekebilir
+				if !Idchecked{
+					theId:=getMaxColumnValue(collection.data,bak[k+1],tableName)+1
+					theeId=theId
+					Idchecked=true
+				}
+				slc=append(slc,theeId)
+				theeId++;
+				s:=strings.Split(bak[k+1],"_")
+				setTuples(sl.Index(i).Field(k).Interface(),tableName+"_"+s[len(s)-1],theeId-1,collection)
+
+				/*switch sl.Index(i).Field(k).Elem().Kind() {
+				case reflect.Int,reflect.Int8,reflect.Int16,reflect.Int32,reflect.Int64:
+					setTuple(int(0),tableName+"_"+s[len(s)-1],theeId-1,collection)
+				case reflect.Float32,reflect.Float64:
+					setTuple(float32(0),tableName+"_"+s[len(s)-1],theeId-1,collection)
+				case reflect.String:
+					setTuple(string("0"),tableName+"_"+s[len(s)-1],theeId-1,collection)
+				case reflect.Bool:
+
+				default:
+
+
+				}*/
+
+			default:
+				slc=append(slc,sl.Index(i).Field(k).Interface())//sql-engine issue here!!!
+			}
+			fmt.Println(slc)
+
+
+		}
+		res, err := stmt.Exec(slc...)
 		Check(err)
+		_ = res
+
 		if err != nil {
 			err = Tx.Rollback()
 			Check(err)
 		}
-		_ = res
+
 
 
 
@@ -1198,6 +1486,57 @@ func setTuple(x interface{},tableName string,Id int,collection Collection){
 	_=res
 	_=Tx
 }
+
+func setTuple2(x interface{},tableName string,Id int,collection Collection,colNames []string){
+	value:=reflect.ValueOf(x)
+	//colNames:=getColumnNames(collection.data,tableName)
+	myMap:=make(map[string]interface{})
+
+	for i,v:=range colNames{
+		if strings.Contains(v,"EMARR_"){//array or slice field!
+			s:=strings.Split(v,"_")
+			setTuples(value.Field(i-1).Interface(),tableName+"_"+s[2],Id,collection)
+			myMap[v]=Id //like foreign key
+			/*s:=strings.Split(v,"_")
+			myMap[v]=Id //like foreign key
+			setTuple(value.Field(i-1).Interface(),tableName+"_"+s[2],Id,collection)*/
+
+		}else if strings.Contains(v,"EM_"){//for embedded field
+			s:=strings.Split(v,"_")
+			myMap[v]=Id//like foreign key
+			setTuple(value.Field(i-1).Interface(),tableName+"_"+s[1],Id,collection)
+
+		}else if v=="Id"{
+
+			myMap[v]=Id
+
+		}else{//for normal types
+
+			myMap[v]=value.Field(i-1).Interface()
+		}
+	}
+
+	Tx,err:=collection.data.db.Begin()
+	Check(err)
+	stmt,err:=Tx.Prepare(getInsertQuery(tableName,colNames))
+	Check(err)
+	giveMeaSlice:=orderForInsert(myMap,colNames)
+	res,err:=stmt.Exec(giveMeaSlice...)//passed
+	if err!=nil{
+		err=Tx.Rollback()
+		Check(err)
+	}
+
+	err=Tx.Commit()
+
+	Check(err)
+	err=stmt.Close()
+	Check(err)
+
+	_=res
+	_=Tx
+}
+
 
 func orderForInsert(myMap map[string]interface{},cols []string) []interface{}{
 	slice:=make([]interface{},0,1)
