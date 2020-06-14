@@ -1061,7 +1061,7 @@ func createOrmConfigForMySQl(x interface{},tableName string) MySqlOrmConfig {
 	}
 }
 
-func (mysql MysqlDB) AddLocalHooks(hks ...LocalHook) {
+func (mysql *MysqlDB) AddLocalHooks(hks ...LocalHook) {
 	var ids []string
 	for i:=0;i< len(hks);i++{
 		ids = append(ids,hks[i].getID())
@@ -1070,12 +1070,12 @@ func (mysql MysqlDB) AddLocalHooks(hks ...LocalHook) {
 	mysql.LocalH=append(mysql.LocalH,hks...)
 }
 
-func (mysql MysqlDB) AddLocalHook(hks LocalHook) {
+func (mysql *MysqlDB) AddLocalHook(hks LocalHook) {
 	mysql.DeleteLocalHook(hks.getID())
 	mysql.LocalH=append(mysql.LocalH,hks)
 }
 
-func (mysql MysqlDB) DeleteLocalHook(hks string) {
+func (mysql *MysqlDB) DeleteLocalHook(hks string) {
 	for i:=0;i< len(mysql.LocalH);i++{
 		if mysql.LocalH[i].getID()==hks{
 			mysql.LocalH[i]=mysql.LocalH[len(mysql.LocalH)-1]
@@ -1085,7 +1085,7 @@ func (mysql MysqlDB) DeleteLocalHook(hks string) {
 	}
 }
 
-func (mysql MysqlDB) DeleteLocalHooks(hks ...string) {
+func (mysql *MysqlDB) DeleteLocalHooks(hks ...string) {
 	mysql.LocalH=reorder(mysql.LocalH,hks)
 }
 
