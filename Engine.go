@@ -65,7 +65,8 @@ func Use(yourDb string,options IOptions) (IDatabase,error){
 		path:=options.Options()[1]
 		return getDatabase(dname,path),nil
 	case PostgreSQL:
-		return nil,nil
+		arr:=options.Options()
+		return getPostgreSQL(arr[0],arr[1],arr[2],arr[3],arr[4],arr[5]),nil
 	case MongoDB:
 		applyUri:=options.Options()[0]
 		dname:=options.Options()[1]
